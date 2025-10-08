@@ -1,4 +1,4 @@
-# để ý đoạn này là tạo file preprocess về local tại t chưa đẩy file này lên git (mọi người để ý path)
+# để ý đoạn này là tạo file preprocess  (mọi người để ý path)
 # from data_preprocessing import basic_transform, get_data
 # data = get_data(r"https://raw.githubusercontent.com/7hufofbun/DSEB--Machine-Learning_Group5/refs/heads/main/data/weather_hcm_daily.csv")
 # data = basic_transform(data)
@@ -12,11 +12,11 @@ from sklearn.feature_selection import SelectFromModel
 from sklearn.metrics import mean_squared_error
 import matplotlib.pyplot as plt  # Optional for visualization
 
-# Load preprocessed data (trỏ vào folder data không nó bị lỗi)
+# Load preprocessed data (trỏ vào folder data không nó bị lỗi (k dùng link git được do chưa merge với main))
 df = pd.read_csv("data\preprocessed_data.csv", parse_dates=["datetime"])
 
-# Ensure data is sorted by datetime (cái này không cần lắm, có thể bỏ)
-df = df.sort_values("datetime").reset_index(drop=True)
+# Set index là datetime
+df = df.set_index("datetime").sort_index()
 
 # Create 5 future-day targets
 for i in range(1, 6):
