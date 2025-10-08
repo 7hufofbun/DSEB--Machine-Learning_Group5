@@ -39,6 +39,9 @@ def clean_data(data):
         cat_imputer = SimpleImputer(strategy='most_frequent')
         data[cat_cols] = cat_imputer.fit_transform(data[cat_cols])
 
+    # drop duplicates
+    data.drop_duplicates(inplace=True)
+    
     return data
 
 def winsorize_by_quantile(data, columns=None, lower_q=0.05, upper_q=0.95):
