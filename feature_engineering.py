@@ -50,7 +50,6 @@ text_cols = ["conditions", "description", "icon", "source"]
 df_reduced = df_reduced.drop(columns=[c for c in text_cols if c in df_reduced.columns])
 
 # Drop potentially redundant columns (based on domain knowledge and correlation)
-# Note: We've removed fewer than before; feature selection will handle the rest.
 redundant_cols = ["solarenergy", "uvindex", "moonphase"]  # Redundant or irrelevant
 df_reduced = df_reduced.drop(columns=[c for c in redundant_cols if c in df_reduced.columns])
 
