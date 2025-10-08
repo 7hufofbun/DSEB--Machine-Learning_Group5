@@ -16,6 +16,7 @@ def clean_data(data):
     uni_value = data.nunique()
     col = uni_value[uni_value == 1].index
     data.drop(col, axis=1, inplace=True)
+    data.drop(['description'], axis=1, inplace=True)
 
     # normalize data dtypes
     data['datetime'] = pd.to_datetime(data['datetime'])
