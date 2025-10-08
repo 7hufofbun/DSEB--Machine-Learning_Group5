@@ -1,255 +1,180 @@
-# để ý đoạn này là tạo file preprocess  (mọi người để ý path)
-# from data_preprocessing import basic_transform, get_data
-# data = get_data(r"https://raw.githubusercontent.com/7hufofbun/DSEB--Machine-Learning_Group5/refs/heads/main/data/weather_hcm_daily.csv")
-# data = basic_transform(data)
-# data.to_csv(r"F:\DSEB\Semester5\ML\Project\DSEB--Machine-Learning_Group5\data\preprocessed_data.csv", index=False)
+# feature_engineering.py
+# This script handles Step 4: Feature Engineering for the Ho Chi Minh City temperature forecasting project.
+# We assume the data has been preprocessed using the functions from data_preprocessing.py.
+# The goal is to transform the raw/preprocessed data into a feature matrix X and target Y suitable for machine learning.
+# Since this is time series forecasting, we will:
+# 1. Drop unnecessary columns early to optimize memory and computation.
+# 2. Extract datetime components for seasonality.
+# 3. Create lag features (past values) to capture temporal dependencies.
+# 4. Create rolling window features (e.g., moving averages) to capture trends and volatility.
+# 5. Optionally, create interactive features (e.g., products of key variables).
+# 6. Define Y as the temperatures for the next 5 days (multi-step forecasting targets).
+# 7. Use Random Forest to select features with importance >= 0.0065 for a single-step prediction.
+# 8. Export X and Y to outputs/X_features.csv and outputs/Y_target.csv.
+# Note: Optimized to avoid PerformanceWarning and DTypePromotionError, with early dropping of unnecessary columns.
 
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split, TimeSeriesSplit, cross_val_score
-from sklearn.feature_selection import SelectFromModel
 from sklearn.metrics import mean_squared_error
-import matplotlib.pyplot as plt  # Optional for visualization
+import os  # For creating output directory
 
-# Load preprocessed data (trỏ vào folder data không nó bị lỗi (k dùng link git được do chưa merge với main))
-df = pd.read_csv("data\preprocessed_data.csv", parse_dates=["datetime"])
+# Import functions from data_preprocessing.py (assuming it's in the same directory)
+from data_preprocessing import get_data, basic_transform
 
-# Set index là datetime
-df = df.set_index("datetime").sort_index()
+def drop_unnecessary_columns(df):
+    """
+    Drop columns that are irrelevant or redundant based on data understanding.
+    - Low-correlation features: moonphase, windgust, precipcover, precipprob.
+    - Non-numeric or redundant: sunrise, sunset (since datetime features are extracted).
+    """
+    low_corr_cols = ['moonphase', 'windgust', 'precipcover', 'precipprob']
+    non_numeric_cols = ['sunrise', 'sunset']
+    drop_cols = low_corr_cols + non_numeric_cols
+    df_copy = df.copy()
+    df_copy.drop(columns=[col for col in drop_cols if col in df_copy.columns], inplace=True)
+    return df_copy
 
-# Create 5 future-day targets
-for i in range(1, 6):
-    df[f"temp_target_t+{i}"] = df["temp"].shift(-i)
+def extract_datetime_features(df):
+    """
+    Extract components from datetime for seasonality.
+    - Year, month, day, day of week, quarter.
+    This helps capture annual, monthly, and weekly patterns in temperature.
+    """
+    df_copy = df.copy()
+    df_copy['year'] = df_copy['datetime'].dt.year
+    df_copy['month'] = df_copy['datetime'].dt.month
+    df_copy['day'] = df_copy['datetime'].dt.day
+    df_copy['dayofweek'] = df_copy['datetime'].dt.dayofweek
+    df_copy['quarter'] = df_copy['datetime'].dt.quarter
+    df_copy['is_weekend'] = df_copy['dayofweek'].isin([5, 6]).astype(int)
+    return df_copy
 
-# Drop rows where any of the 5 targets are NaN (last 5 rows)
-df = df.dropna(subset=[f"temp_target_t+{i}" for i in range(1, 6)])
+def create_lag_features(df, columns, lags=[1, 2, 3, 7, 14, 30]):
+    """
+    Create lag features for specified columns.
+    - Lags: Past values shifted by 1,2,3,7,14,30 days to capture short-term and longer-term dependencies.
+    - Uses pd.concat to avoid PerformanceWarning.
+    """
+    df_copy = df.copy()
+    new_columns = {}
+    for col in columns:
+        for lag in lags:
+            new_columns[f'{col}_lag_{lag}'] = df_copy[col].shift(lag)
+    lag_df = pd.DataFrame(new_columns, index=df_copy.index)
+    return pd.concat([df_copy, lag_df], axis=1)
 
-# Define y as all 5 targets
-target_cols = [f"temp_target_t+{i}" for i in range(1, 6)]
-y = df[target_cols]
+def create_rolling_features(df, columns, windows=[3, 7, 14, 30]):
+    """
+    Create rolling window features.
+    - Mean and std over windows of 3,7,14,30 days, shifted by 1 to avoid data leakage.
+    - Uses pd.concat to avoid PerformanceWarning.
+    """
+    df_copy = df.copy()
+    new_columns = {}
+    for col in columns:
+        for window in windows:
+            new_columns[f'{col}_roll_mean_{window}'] = df_copy[col].rolling(window=window).mean().shift(1)
+            new_columns[f'{col}_roll_std_{window}'] = df_copy[col].rolling(window=window).std().shift(1)
+    rolling_df = pd.DataFrame(new_columns, index=df_copy.index)
+    return pd.concat([df_copy, rolling_df], axis=1)
 
-print("Multi-output target variables defined:")
-print(y.head())
-print("\nShape of y:", y.shape)
+def create_interactive_features(df):
+    """
+    Optional: Create interaction features.
+    - Based on insights from data understanding, e.g., temp * humidity, solarradiation / (cloudcover + 1).
+    - Uses copy to avoid fragmentation.
+    """
+    df_copy = df.copy()
+    df_copy['temp_humidity_interact'] = df_copy['temp'] * df_copy['humidity']
+    df_copy['effective_solar'] = df_copy['solarradiation'] / (df_copy['cloudcover'] + 1)
+    df_copy['dew_wind_interact'] = df_copy['dew'] * df_copy['windspeedmean']
+    return df_copy
 
-# =====================================
-# Step 1: Dimensionality Reduction
-# Explanation: Dropping non-numeric or redundant columns is a good start, but I've 
-# refined the list based on typical weather data insights. For example, 'precipprob' 
-# and 'precipcover' might still be useful if precipitation affects temperature indirectly, 
-# but we'll let feature selection decide later. We keep datetime for now to extract 
-# features, then drop it.
-# =====================================
+def create_targets(df, horizons=5):
+    """
+    Create multi-step targets for next 5 days.
+    - Y will be a DataFrame with columns ['temp_target_1', 'temp_target_2', ..., 'temp_target_5'].
+    """
+    targets = pd.DataFrame(index=df.index)
+    for h in range(1, horizons + 1):
+        targets[f'temp_target_{h}'] = df['temp'].shift(-h)
+    return targets
 
-# Keep a copy before dropping
-df_reduced = df.copy()
+def select_features_with_rf(X, y, importance_threshold=0.0065):
+    """
+    Use Random Forest to select features with importance >= threshold.
+    - Train RF on X and y (single target, e.g., 1-day ahead).
+    - Returns selected X with features meeting the threshold.
+    """
+    valid_idx = y.notna()
+    X = X[valid_idx]
+    y = y[valid_idx]
+    
+    rf = RandomForestRegressor(n_estimators=100, random_state=42)
+    rf.fit(X, y)
+    
+    importances = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)
+    print("Top Feature Importances:\n", importances.head(20))
+    print(f"\nNumber of features with importance >= {importance_threshold}: {sum(importances >= importance_threshold)}")
+    
+    top_features = importances[importances >= importance_threshold].index
+    X_selected = X[top_features]
+    
+    return X_selected, importances
 
-# Drop text/non-numeric columns
-text_cols = ["conditions", "description", "icon", "source"]
-df_reduced = df_reduced.drop(columns=[c for c in text_cols if c in df_reduced.columns])
+def main():
+    # Step 1: Load and preprocess data
+    path = r"https://raw.githubusercontent.com/7hufofbun/DSEB--Machine-Learning_Group5/refs/heads/main/data/weather_hcm_daily.csv"
+    data = get_data(path)
+    data = basic_transform(data)
+    
+    # Step 2: Drop unnecessary columns for optimization
+    data = drop_unnecessary_columns(data)
+    
+    # Step 3: Extract datetime features (before setting index)
+    data = extract_datetime_features(data)
+    
+    # Step 4: Set index to datetime for time series operations
+    data.set_index('datetime', inplace=True)
+    data.sort_index(inplace=True)
+    
+    # Step 5: Define key columns for lags and rollings
+    key_columns = ['temp', 'tempmax', 'tempmin', 'feelslike', 'humidity', 'dew', 'solarradiation', 'cloudcover', 'windspeedmean']
+    encoded_cols = [col for col in data.columns if col.startswith(('icon_', 'conditions_'))]
+    key_columns.extend(encoded_cols)
+    
+    # Step 6: Create lag features
+    data = create_lag_features(data, key_columns)
+    
+    # Step 7: Create rolling features
+    data = create_rolling_features(data, key_columns)
+    
+    # Step 8: Create interactive features
+    data = create_interactive_features(data)
+    
+    # Step 9: Create targets Y (next 5 days)
+    Y = create_targets(data)
+    
+    # Step 10: Define X, avoiding leakage
+    drop_cols = ['temp', 'tempmax', 'tempmin', 'feelslike']
+    X = data.drop(columns=drop_cols, errors='ignore')
+    
+    # Align X and Y
+    combined = pd.concat([X, Y], axis=1).dropna()
+    X = combined[X.columns]
+    Y = combined[Y.columns]
+    
+    # Step 11: Feature selection with Random Forest
+    y_single = Y['temp_target_1']
+    X_selected, importances = select_features_with_rf(X, y_single, importance_threshold=0.0065)
+    
+    # Step 12: Export X and Y to outputs directory
+    os.makedirs('outputs', exist_ok=True)
+    X_selected.to_csv('outputs/X_features.csv', index=True)
+    Y.to_csv('outputs/Y_target.csv', index=True)
+    
+    print("Feature engineering complete. X and Y exported to outputs/X_features.csv and outputs/Y_target.csv.")
 
-# Drop potentially redundant columns (based on domain knowledge and correlation)
-redundant_cols = ["solarenergy", "uvindex", "moonphase"]  # Redundant or irrelevant
-df_reduced = df_reduced.drop(columns=[c for c in redundant_cols if c in df_reduced.columns])
-
-print("\nAfter initial dimensionality reduction:")
-print("Remaining columns:", df_reduced.columns.tolist())
-print("Shape:", df_reduced.shape)
-
-# Separate X (features) from y (targets)
-X = df_reduced.drop(columns=target_cols + ["datetime"])  # Drop targets and datetime for now
-
-# =====================================
-# Step 2: Add Lag Features
-# Explanation: Lags capture autocorrelation in time series (e.g., yesterday's temp 
-# influences today's). We've limited max_lag to 7, but you could optimize this via 
-# autocorrelation plots (e.g., using pd.plotting.lag_plot or statsmodels.acf). 
-# Engineered features like lags often outperform originals because they explicitly 
-# model temporal dependencies, which models like RF might not capture otherwise. 
-# This is generally good for the model as it provides more relevant signals, but 
-# watch for multicollinearity (high correlation between lags).
-# =====================================
-
-lag_features = ["temp", "humidity", "solarradiation", "cloudcover"]
-max_lag = 7
-
-for col in lag_features:
-    for lag in range(1, max_lag + 1):
-        X[f"{col}_lag{lag}"] = df_reduced[col].shift(lag)
-
-# Drop NaNs introduced by shifts
-X = X.dropna().reset_index(drop=True)
-y = y.iloc[X.index].reset_index(drop=True)  # Align y with X
-
-print(f"\nAdded lag features up to {max_lag} days for: {lag_features}")
-print("New X shape:", X.shape)
-
-# =====================================
-# Step 3: Add Rolling Statistics
-# Explanation: Rolling means/std capture trends and volatility over windows. 
-# We've kept windows [3,7] as short-term trends are useful for weather. These 
-# can be "better" than originals because they smooth noise and highlight patterns 
-# (e.g., weekly averages). Good for models, but larger windows might leak future 
-# info if not careful—here, since we're using past data only, it's fine.
-# =====================================
-
-rolling_features = ["temp", "humidity", "solarradiation"]
-windows = [3, 7]
-
-for col in rolling_features:
-    for w in windows:
-        X[f"{col}_rollmean_{w}"] = df_reduced[col].rolling(window=w).mean().shift(1) 
-        X[f"{col}_rollstd_{w}"] = df_reduced[col].rolling(window=w).std().shift(1)
-
-# Drop NaNs from rolling
-X = X.dropna().reset_index(drop=True)
-y = y.iloc[X.index].reset_index(drop=True)
-
-print("\nAdded rolling mean/std features for:", rolling_features)
-print("New X shape:", X.shape)
-
-# =====================================
-# Step 4: Add Time-Based Features
-# Explanation: These capture seasonality (e.g., month affects temp). We've added 
-# cyclical encoding for month/dayofweek to handle periodicity (e.g., Dec close to Jan). 
-# This is an optimization: sine/cosine transformations make models understand cycles better.
-# =====================================
-
-# Align datetime with current X index
-datetime_aligned = df["datetime"].iloc[X.index]
-
-X["month"] = datetime_aligned.dt.month
-X["day"] = datetime_aligned.dt.day
-X["dayofweek"] = datetime_aligned.dt.dayofweek
-
-# Cyclical encoding for better modeling of periodicity
-X["month_sin"] = np.sin(2 * np.pi * X["month"] / 12)
-X["month_cos"] = np.cos(2 * np.pi * X["month"] / 12)
-X["dayofweek_sin"] = np.sin(2 * np.pi * X["dayofweek"] / 7)
-X["dayofweek_cos"] = np.cos(2 * np.pi * X["dayofweek"] / 7)
-
-# Drop original non-cyclical if desired (but keep for interpretability)
-# X = X.drop(columns=["month", "dayofweek"])
-
-print("\nAdded time-based features with cyclical encoding: month, day, dayofweek, sins/cos")
-
-# =====================================
-# Step 5: Add Interaction Features
-# Explanation: Interactions capture combined effects (e.g., high humidity + high temp = discomfort, 
-# but for temp prediction, solar * (1-cloud) models effective sunlight). These can boost 
-# performance if non-linear relationships exist. They're often "better" because base features 
-# alone might not capture synergies.
-# =====================================
-
-X["solar_cloud_interact"] = X["solarradiation"] * (1 - X["cloudcover"] / 100)
-X["humidity_temp_interact"] = X["humidity"] * X["temp"]
-
-X = X.dropna().reset_index(drop=True)
-y = y.iloc[X.index].reset_index(drop=True)
-
-print("\nAdded interaction features: solar_cloud_interact, humidity_temp_interact")
-print("Final X shape before selection:", X.shape)
-print("y shape:", y.shape)
-
-# =====================================
-# Step 6: Feature Selection with Random Forest
-# Explanation: RF feature importance is good, but we've improved by:
-# - Using TimeSeriesSplit for CV to respect time order (prevents leakage).
-# - Embedded selection with SelectFromModel (automatically selects based on importance).
-# - Added cross-validation to evaluate if selected features improve model performance.
-# - Why engineered > original? Engineered features encode domain-specific patterns 
-#   (time, trends), making them more predictive. This is beneficial for the model 
-#   as long as we avoid overfitting—use CV to check.
-# =====================================
-
-# Select only numeric columns
-X = X.select_dtypes(include=[np.number])
-
-# Time-based split (80% train, 20% test, chronological)
-split_idx = int(len(X) * 0.8)
-X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-
-# Train RF for importance
-rf = RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1)
-rf.fit(X_train, y_train)
-
-# Get average importances
-feature_importances = np.mean([tree.feature_importances_ for tree in rf.estimators_], axis=0)
-
-importance_df = pd.DataFrame({
-    "Feature": X.columns,
-    "Importance": feature_importances
-}).sort_values(by="Importance", ascending=False)
-
-print("\nTop 15 Important Features:")
-print(importance_df.head(15))
-
-# Visualize (optional)
-plt.figure(figsize=(10, 6))
-plt.barh(importance_df["Feature"].head(15), importance_df["Importance"].head(15))
-plt.gca().invert_yaxis()
-plt.title("Top 15 Feature Importances (Random Forest)")
-plt.xlabel("Importance")
-plt.show()
-
-# Embedded feature selection (auto-select based on mean importance)
-selector = SelectFromModel(rf, prefit=True)
-X_selected = selector.transform(X)
-selected_features = X.columns[selector.get_support()].tolist()
-
-print("\nSelected important features:")
-print(selected_features)
-print("New X_selected shape:", X_selected.shape)
-
-# =====================================
-# Step 7: Evaluate Optimization
-# Explanation: To check if new features are "good," we use cross-validation with 
-# TimeSeriesSplit. Compare MSE with/without engineered features. If engineered 
-# lower MSE, they're beneficial. This prevents blindly adding features.
-# =====================================
-
-# Re-split selected features
-X_selected_train, X_selected_test = pd.DataFrame(X_selected[:split_idx], columns=selected_features), pd.DataFrame(X_selected[split_idx:], columns=selected_features)
-
-# Baseline: Train RF on selected features
-rf_selected = RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1)
-rf_selected.fit(X_selected_train, y_train)
-
-# Predict and evaluate
-y_pred = rf_selected.predict(X_selected_test)
-mse = mean_squared_error(y_test, y_pred)
-print(f"\nMSE on test set with selected features: {mse:.4f}")
-
-# Optional: Compare to original features only (no engineered)
-original_cols = [col for col in X.columns if not any(s in col for s in ["lag", "roll", "interact", "sin", "cos"])]
-X_original = X[original_cols]
-X_orig_train, X_orig_test = X_original.iloc[:split_idx], X_original.iloc[split_idx:]
-
-rf_orig = RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1)
-rf_orig.fit(X_orig_train, y_train)
-y_pred_orig = rf_orig.predict(X_orig_test)
-mse_orig = mean_squared_error(y_test, y_pred_orig)
-print(f"MSE on test set with original features only: {mse_orig:.4f}")
-
-# Cross-validation for robustness
-tscv = TimeSeriesSplit(n_splits=5)
-cv_scores = cross_val_score(rf_selected, X_selected_train, y_train, cv=tscv, scoring="neg_mean_squared_error")
-print(f"\nCV MSE (selected features): {-cv_scores.mean():.4f}")
-
-# =====================================
-# Step 8: Save Results
-# Explanation: Export as before, but now with selected features only.
-# =====================================
-
-importance_df.to_csv("outputs/feature_importance.csv", index=False)
-pd.DataFrame(X_selected, columns=selected_features).to_csv("outputs/X_selected.csv", index=False)
-y.to_csv("outputs/y_targets.csv", index=False)
-
-print("\nExported:")
-print(" - feature_importance.csv")
-print(" - X_selected.csv")
-print(" - y_targets.csv")
-
-
+if __name__ == "__main__":
+    main()
