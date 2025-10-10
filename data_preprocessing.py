@@ -23,21 +23,20 @@ def clean_data(data):
     data['sunrise'] = pd.to_datetime(data['sunrise'])
     data['sunset'] = pd.to_datetime(data['sunset'])
 
-    # handle missing data
+    # handle missing data in time series
     percentage_missing = data.isnull().sum() * 100 / len(data)
     cols = percentage_missing[percentage_missing > 0.5].index
     data.drop(cols, axis=1, inplace=True)
 
     num_cols = data.select_dtypes(include=['float64', 'int64']).columns
     if len(num_cols) > 0:
-        num_imputer = SimpleImputer(strategy='median')
-        data[num_cols] = num_imputer.fit_transform(data[num_cols])
+        data = data.sort_values(by='datetime')
+        data[num_cols] = data[num_cols].interpolate(method = 'time', limit_direction = 'both')
     
     # Categorical columns
     cat_cols = data.select_dtypes(include=['object']).columns
     if len(cat_cols) > 0:
-        cat_imputer = SimpleImputer(strategy='most_frequent')
-        data[cat_cols] = cat_imputer.fit_transform(data[cat_cols])
+        data[cat_cols] = data[cat_cols].ffill().bfill()
 
     # drop duplicates
     data.drop_duplicates(inplace=True)
