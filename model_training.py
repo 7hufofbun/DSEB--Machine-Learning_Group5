@@ -89,11 +89,18 @@ def train_xgb_model(X_train, Y_train, X_val, Y_val, **xgb_kwargs):
     print(f"XGB Validation RMSE: {rmse:.4f}")
     return model, rmse
 
-from data_preprocessing import (get_data, basic_transform, clean_data) 
-from feature_engineering import (drop_unnecessary_columns, extract_datetime_features,
-                                 create_lag_features, create_rolling_features,
-                                 create_interactive_features, create_targets) 
-hourly_path = r"D:\DSEB\SEM5\ML\data\weather_hcm_hourly.csv"
+#--------------HOURLY-------------------#
+from data_preprocessing import (
+    get_data,
+    basic_transform,
+    clean_data,
+    extract_datetime_features,
+    create_lag_features,
+    create_rolling_features,
+    create_interactive_features,
+)
+
+hourly_path = r"data\weather_hcm_hourly.csv"
 hourly_data = get_data(hourly_path)
 
 # Lightweight local cleaning (avoid expensive time-based interpolation)
@@ -149,7 +156,8 @@ except Exception:
 
 # Continue with feature transforms
 hourly_data = basic_transform(hourly_data)
-hourly_data = drop_unnecessary_columns(hourly_data)
+# drop_unnecessary_columns is part of feature_engineering; avoid using it
+# per user's request and rely on data_preprocessing transformations only
 hourly_data = extract_datetime_features(hourly_data)
 hourly_data.set_index('datetime', inplace=True)
 hourly_data.sort_index(inplace=True)
@@ -183,6 +191,8 @@ def create_rolling_features_fast(df, columns, windows=[3,6,12,24]):
 # Use faster in-place builders to avoid expensive copies in feature_engineering
 hourly_data = create_lag_features_fast(hourly_data, key_columns_hourly, lags=[1, 2, 3, 6, 12, 24])
 hourly_data = create_rolling_features_fast(hourly_data, key_columns_hourly, windows=[3, 6, 12, 24])
+# Consolidate frame to reduce fragmentation after many column inserts
+hourly_data = hourly_data.copy()
 
 # Ensure expected columns used by feature functions exist. The shared
 # `create_interactive_features` expects `windspeedmean` and `dew`. Some
@@ -203,10 +213,17 @@ if 'dew' not in hourly_data.columns:
     else:
         hourly_data['dew'] = np.nan
 
+# Use create_interactive_features from data_preprocessing
 hourly_data = create_interactive_features(hourly_data)
 
-# Targets: next 1 hour (single-value target per sequence)
-Y_hourly = create_targets(hourly_data, horizons=1)
+# Targets: next 1 hour (single-value target)
+def create_targets(df, horizon=1, target_col='temp'):
+    targets = pd.DataFrame(index=df.index)
+    for h in range(1, horizon + 1):
+        targets[f'{target_col}_target_{h}'] = df[target_col].shift(-h)
+    return targets
+
+Y_hourly = create_targets(hourly_data, horizon=1, target_col='temp')
 drop_cols_hourly = ['temp', 'feelslike']  # Drop current temp-related
 X_hourly = hourly_data.drop(columns=drop_cols_hourly, errors='ignore')
 
@@ -215,101 +232,35 @@ combined_hourly = pd.concat([X_hourly, Y_hourly], axis=1).dropna()
 X_hourly = combined_hourly[X_hourly.columns]
 Y_hourly = combined_hourly[Y_hourly.columns]
 
-
-def create_sliding_windows(X_df, Y_df, seq_len):
-        """
-        Create sliding windows from X and align Y to the window end.
-        X_df: DataFrame of shape (T, n_features)
-        Y_df: DataFrame of shape (T, horizon)
-        Returns:
-            X_seq: numpy array (N, seq_len, n_features)
-            Y_seq: numpy array (N, horizon)
-        where N = T - seq_len + 1
-        """
-        X_arr = X_df.values
-        Y_arr = Y_df.values
-        T = X_arr.shape[0]
-        if T < seq_len:
-                return np.empty((0, seq_len, X_arr.shape[1])), np.empty((0, Y_arr.shape[1]))
-        N = T - seq_len + 1
-        X_seq = np.stack([X_arr[i:i+seq_len] for i in range(N)], axis=0)
-        # Align target to the last time step of each window
-        Y_seq = np.stack([Y_arr[i+seq_len-1] for i in range(N)], axis=0)
-        return X_seq, Y_seq
-
-
-# --- Create sliding windows (sequence length) for LSTM input ---
-seq_len = 12  # change this to the desired sequence length
-X_seq, Y_seq = create_sliding_windows(X_hourly, Y_hourly, seq_len=seq_len)
-print(f"Sliding windows created: X_seq shape={X_seq.shape}, Y_seq shape={Y_seq.shape}, seq_len={seq_len}")
-if X_seq.size == 0:
-    raise SystemExit("No sliding windows created: reduce seq_len or verify hourly data length after preprocessing.")
-
-# Chronological split on sequences
-n_h = len(X_seq)
+# Chronological split for tabular hourly features (no sliding windows)
+n_h = len(X_hourly)
 train_size_h = int(0.7 * n_h)
 val_size_h = int(0.15 * n_h)
 
-X_train_h = X_seq[:train_size_h]
-Y_train_h = Y_seq[:train_size_h]
-X_val_h = X_seq[train_size_h:train_size_h + val_size_h]
-Y_val_h = Y_seq[train_size_h:train_size_h + val_size_h]
-X_test_h = X_seq[train_size_h + val_size_h:]
-Y_test_h = Y_seq[train_size_h + val_size_h:]
+X_train_h = X_hourly.iloc[:train_size_h].values
+Y_train_h = Y_hourly.iloc[:train_size_h].values
+X_val_h = X_hourly.iloc[train_size_h:train_size_h + val_size_h].values
+Y_val_h = Y_hourly.iloc[train_size_h:train_size_h + val_size_h].values
+X_test_h = X_hourly.iloc[train_size_h + val_size_h:].values
+Y_test_h = Y_hourly.iloc[train_size_h + val_size_h:].values
 
-# Scaling in pipeline-like manner
-# For sequences we fit scaler on the reshaped 2D array (samples*time, features)
-nsamples, seq_len_actual, nfeatures = X_train_h.shape
+print(f"Hourly tabular splits — Train: {X_train_h.shape}, Val: {X_val_h.shape}, Test: {X_test_h.shape}")
 
-def manual_robust_scale_sequences(X_train, X_val=None, X_test=None, max_samples=50000, random_state=42):
-    """Compute per-feature median and IQR on a sample and scale arrays accordingly.
-    Returns scaled arrays and (median, iqr) to inverse-transform if needed.
-    """
-    np.random.seed(random_state)
-    train_2d = X_train.reshape(-1, nfeatures)
-    n_total = train_2d.shape[0]
-    sample_n = min(n_total, max_samples)
-    if sample_n < n_total:
-        idx = np.random.choice(n_total, sample_n, replace=False)
-        sample = train_2d[idx]
-    else:
-        sample = train_2d
+# Scaling: use RobustScaler for X and StandardScaler for Y
+scaler_x_h = RobustScaler().fit(X_train_h)
+X_train_h = scaler_x_h.transform(X_train_h)
+X_val_h = scaler_x_h.transform(X_val_h) if len(X_val_h) > 0 else X_val_h
+X_test_h = scaler_x_h.transform(X_test_h) if len(X_test_h) > 0 else X_test_h
 
-    med = np.median(sample, axis=0)
-    q75 = np.percentile(sample, 75, axis=0)
-    q25 = np.percentile(sample, 25, axis=0)
-    iqr = q75 - q25
-    # avoid division by zero
-    iqr[iqr == 0] = 1.0
-
-    def scale_array(arr):
-        if arr.size == 0:
-            return arr
-        arr2 = arr.reshape(-1, nfeatures)
-        arr2 = (arr2 - med) / iqr
-        return arr2.reshape(arr.shape)
-
-    X_train_s = scale_array(X_train)
-    X_val_s = scale_array(X_val) if X_val is not None and X_val.size else X_val
-    X_test_s = scale_array(X_test) if X_test is not None and X_test.size else X_test
-    return X_train_s, X_val_s, X_test_s, med, iqr
-
-
-# Scale sequences using manual robust scaler (sample-based)
-X_train_h, X_val_h, X_test_h, x_med, x_iqr = manual_robust_scale_sequences(X_train_h, X_val_h, X_test_h)
-
-# Scale Y per-output (no sequence dimension)
 scaler_y_h = StandardScaler().fit(Y_train_h)
 Y_train_h = scaler_y_h.transform(Y_train_h)
-if len(Y_val_h) > 0:
-    Y_val_h = scaler_y_h.transform(Y_val_h)
-if len(Y_test_h) > 0:
-    Y_test_h = scaler_y_h.transform(Y_test_h)
+Y_val_h = scaler_y_h.transform(Y_val_h) if len(Y_val_h) > 0 else Y_val_h
+Y_test_h = scaler_y_h.transform(Y_test_h) if len(Y_test_h) > 0 else Y_test_h
 
-# PyTorch Dataset
+# PyTorch Dataset for 2D tabular data (flattened inputs)
 class TimeSeriesDataset(Dataset):
     def __init__(self, X, y):
-        # X: (N, seq_len, features), y: (N, horizon)
+        # X: (N, features), y: (N, 1)
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.float32)
 
@@ -356,3 +307,89 @@ def train_lstm(model, train_loader, val_loader, criterion, optimizer, n_epochs=5
                 val_loss += criterion(outputs, Y_batch).item()
         print(f'Epoch {epoch+1}, Val Loss: {val_loss/len(val_loader)}')
     return model
+
+def compute_metrics(y_true, y_pred):
+    # y_true/pred: arrays shape (n_samples, n_targets)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    try:
+        mape = mean_absolute_percentage_error(y_true, y_pred)
+    except Exception:
+        mape = np.nan
+    try:
+        r2 = r2_score(y_true, y_pred)
+    except Exception:
+        r2 = np.nan
+    return {'rmse': rmse, 'mape': mape, 'r2': r2}
+
+
+def save_model(obj, path):
+    import joblib
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    joblib.dump(obj, path)
+
+
+if __name__ == '__main__':
+    print('\n--- Training tabular hourly models (no sliding windows) ---')
+
+    # Train RF pipeline (scaler + multioutput RF)
+    print('Training RandomForest pipeline...')
+    # Temporarily reduce complexity for quick runs
+    pipeline_rf.named_steps['model'] = MultiOutputRegressor(RandomForestRegressor(n_estimators=50, random_state=42))
+    pipeline_rf.fit(X_train_h, Y_train_h)
+    preds_rf = pipeline_rf.predict(X_val_h)
+    metrics_rf = compute_metrics(Y_val_h, preds_rf)
+    print('RandomForest validation metrics:', metrics_rf)
+    save_model(pipeline_rf, 'outputs/models/pipeline_rf.joblib')
+
+    # Train XGBoost pipeline
+    print('Training XGBoost pipeline...')
+    pipeline_xgb.named_steps['model'] = MultiOutputRegressor(XGBRegressor(n_estimators=50, random_state=42, verbosity=0))
+    pipeline_xgb.fit(X_train_h, Y_train_h)
+    preds_xgb = pipeline_xgb.predict(X_val_h)
+    metrics_xgb = compute_metrics(Y_val_h, preds_xgb)
+    print('XGBoost validation metrics:', metrics_xgb)
+    save_model(pipeline_xgb, 'outputs/models/pipeline_xgb.joblib')
+
+    # Optionally train LSTM: requires sliding windows. Disabled by default.
+    train_lstm_flag = False
+    if train_lstm_flag:
+        print('Preparing sliding windows for LSTM...')
+        # Create minimal sliding windows for LSTM (seq_len timesteps -> predict next hour)
+        seq_len = 12
+        X_arr = X_hourly.values
+        Y_arr = Y_hourly.values
+        T = X_arr.shape[0]
+        N = T - seq_len
+        if N <= 0:
+            print('Not enough hourly data for LSTM sliding windows. Skipping LSTM.')
+        else:
+            Xs = np.stack([X_arr[i:i+seq_len] for i in range(N)], axis=0)
+            Ys = np.stack([Y_arr[i+seq_len] for i in range(N)], axis=0)
+            # Chronological split
+            nN = len(Xs)
+            tsize = int(0.7 * nN)
+            vsize = int(0.15 * nN)
+            Xtr, Xv, Xt = Xs[:tsize], Xs[tsize:tsize+vsize], Xs[tsize+vsize:]
+            Ytr, Yv, Yt = Ys[:tsize], Ys[tsize:tsize+vsize], Ys[tsize+vsize:]
+            # scale X per-feature
+            ns, sl, nf = Xtr.shape
+            med = np.median(Xtr.reshape(-1, nf), axis=0)
+            iqr = np.percentile(Xtr.reshape(-1, nf), 75, axis=0) - np.percentile(Xtr.reshape(-1, nf), 25, axis=0)
+            iqr[iqr==0] = 1.0
+            def scale_seq(arr):
+                a2 = (arr.reshape(-1, nf) - med) / iqr
+                return a2.reshape(arr.shape)
+            Xtr = scale_seq(Xtr); Xv = scale_seq(Xv); Xt = scale_seq(Xt)
+            # convert to tensors and train small LSTM
+            train_ds = TimeSeriesDataset(Xtr, Ytr)
+            val_ds = TimeSeriesDataset(Xv, Yv)
+            tr_loader = DataLoader(train_ds, batch_size=64, shuffle=False)
+            vl_loader = DataLoader(val_ds, batch_size=64, shuffle=False)
+            model = LSTMModel(input_size=nf, hidden_size=64, num_layers=1, output_size=Ytr.shape[1])
+            optimizer = optim.Adam(model.parameters(), lr=1e-3)
+            criterion = nn.MSELoss()
+            print('Training LSTM for a few epochs...')
+            train_lstm(model, tr_loader, vl_loader, criterion, optimizer, n_epochs=5)
+            save_model(model, 'outputs/models/lstm_hourly.pth')
+
+    print('\nAll done. Models saved to outputs/models/')
