@@ -4,9 +4,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
-
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
+from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
 import os  # For creating output directory
 
 def get_data(path):
@@ -69,7 +70,7 @@ def basic_transform(data):
     ohe = OneHotEncoder(sparse_output=False, drop=None) 
 
     # Fit và transform
-    encoded = ohe.fit_transform(data[categorical_cols])
+    encoded = ohe.fit_transform(df[categorical_cols])
     encoded_df = pd.DataFrame(encoded, columns=ohe.get_feature_names_out(categorical_cols))
 
     data = pd.concat([data.drop(columns=categorical_cols), encoded_df], axis=1)
@@ -154,11 +155,7 @@ def select_features_with_rf(X, y, importance_threshold=0.0065):
     X_selected = X[top_features]
     
     return X_selected, importances
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.ensemble import RandomForestRegressor
-from xgboost import XGBRegressor
+
 
 def select_features_with_rf_xgb_plot(X, y, importance_threshold=0.0065, top_n=20):
     """
@@ -229,6 +226,9 @@ def extract_feature(data):
         return X_reduced
     
     X = remove_highly_correlated_features(X)
+    
+    X.dropna(inplace=True)
+    y = y.loc[X.index] 
     
     return X, y
 
