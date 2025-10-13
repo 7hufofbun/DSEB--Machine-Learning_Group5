@@ -93,7 +93,7 @@ from data_preprocessing import (get_data, basic_transform, clean_data)
 from feature_engineering import (drop_unnecessary_columns, extract_datetime_features,
                                  create_lag_features, create_rolling_features,
                                  create_interactive_features, create_targets) 
-hourly_path = r"D:\DSEB\SEM5\ML\data\weather_hcm_hourly.csv"
+hourly_path = r"F:\DSEB\Semester5\ML\Project\DSEB--Machine-Learning_Group5\data\weather_hcm_daily.csv"
 hourly_data = get_data(hourly_path)
 
 # Lightweight local cleaning (avoid expensive time-based interpolation)
