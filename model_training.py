@@ -1,46 +1,31 @@
-# model_training.py
-# This script handles Step 5: Model Training and Hyper-parameter Tuning for the Ho Chi Minh City temperature forecasting project.
-# We use the features and targets generated from feature_engineering.py (X_features.csv and Y_target.csv).
-# Data splitting: Chronological split to avoid data leakage (70% train, 15% val, 15% test).
-# Models: RandomForestRegressor, XGBoost (both via MultiOutputRegressor for multi-step forecasting), and LSTM for hourly data.
-# Hyper-parameter tuning: Optuna.
-# Metrics: RMSE, MAPE, R2.
-# Monitoring: ClearML (initialize task, log metrics).
-# Pipeline: Used for scaling (though tree models don't strictly need it, good practice).
-# For LSTM on hourly: Similar processing, but with hourly data.
-
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
-from sklearn.multioutput import MultiOutputRegressor
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler, RobustScaler
-from optuna import create_study
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from clearml import Task  # For monitoring
+from sklearn.preprocessing import RobustScaler
+from tuning_utils import tune_xgb_model
+from logging_utils import init_clearml_task, log_metrics, log_model_artifact, log_prediction_plot, close_clearml_task
 import os
+import joblib
+import matplotlib.pyplot as plt
 
-# Load X and Y
-# Read features and targets; explicitly parse the index column as datetime to avoid
-# pandas falling back to slower dateutil parsing per-element.
-X = pd.read_csv(r'outputs\X_features.csv', index_col=0, parse_dates=[0])
-Y = pd.read_csv(r'outputs\Y_target.csv', index_col=0, parse_dates=[0])
+# Set random seed for reproducibility
+np.random.seed(42)
 
-# Ensure chronological order
-X = X.sort_index()
-Y = Y.sort_index()
+# Load X and Y (from feature engineering, Step 4)
+X = pd.read_csv('outputs/X_features.csv', index_col=0, parse_dates=[0])
+Y = pd.read_csv('outputs/Y_target.csv', index_col=0, parse_dates=[0])
 
-# Split: train 70%, val 15%, test 15% - chronological to prevent leakage
+# Adjust Y for 1-day ahead forecasting
+Y = Y.shift(-1).dropna()  # Next day's mean temperature
+X = X.loc[Y.index]  # Align X with Y
+
+# Chronological split: 70% train, 15% val, 15% test
 n = len(X)
 train_size = int(0.7 * n)
 val_size = int(0.15 * n)
-
 X_train = X.iloc[:train_size]
 Y_train = Y.iloc[:train_size]
 X_val = X.iloc[train_size:train_size + val_size]
@@ -50,309 +35,207 @@ Y_test = Y.iloc[train_size + val_size:]
 
 print(f"Train: {X_train.shape}, Val: {X_val.shape}, Test: {X_test.shape}")
 
-# Pipeline for RF
-pipeline_rf = Pipeline([
-    ('scaler', RobustScaler()),
-    ('model', MultiOutputRegressor(RandomForestRegressor(random_state=42)))
-])
-
-# Pipeline for XGBoost
-pipeline_xgb = Pipeline([
-    ('scaler', RobustScaler()),
-    ('model', MultiOutputRegressor(XGBRegressor(random_state=42)))
-])
-
-
-def train_rf_model(X_train, Y_train, X_val, Y_val, **rf_kwargs):
-    """Train a multi-output RandomForest and evaluate on validation set.
-    X_train/X_val: 2D arrays (n_samples, n_features)
-    Y_train/Y_val: 2D arrays (n_samples, n_targets)
-    Returns: fitted model, val_rmse
+# Compute metrics function
+def compute_metrics(y_true, y_pred):
     """
-    model = MultiOutputRegressor(RandomForestRegressor(random_state=42, **rf_kwargs))
-    model.fit(X_train, Y_train)
-    preds = model.predict(X_val)
-    rmse = np.sqrt(mean_squared_error(Y_val, preds))
-    print(f"RF Validation RMSE: {rmse:.4f}")
-    return model, rmse
-
-
-def train_xgb_model(X_train, Y_train, X_val, Y_val, **xgb_kwargs):
-    """Train a multi-output XGBoost and evaluate on validation set.
-    Returns: fitted model, val_rmse
+    Compute evaluation metrics for regression.
+    Args:
+        y_true: Actual values.
+        y_pred: Predicted values.
+    Returns:
+        dict: RMSE, MAPE, R2 metrics.
     """
-    base = XGBRegressor(random_state=42, verbosity=0, n_jobs=-1, **xgb_kwargs)
-    model = MultiOutputRegressor(base)
-    model.fit(X_train, Y_train)
-    preds = model.predict(X_val)
-    rmse = np.sqrt(mean_squared_error(Y_val, preds))
-    print(f"XGB Validation RMSE: {rmse:.4f}")
-    return model, rmse
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    mape = mean_absolute_percentage_error(y_true, y_pred)
+    r2 = r2_score(y_true, y_pred)
+    return {'rmse': rmse, 'mape': mape, 'r2': r2}
 
-from data_preprocessing import (get_data, basic_transform, clean_data) 
-from feature_engineering import (drop_unnecessary_columns, extract_datetime_features,
-                                 create_lag_features, create_rolling_features,
-                                 create_interactive_features, create_targets) 
-hourly_path = r"F:\DSEB\Semester5\ML\Project\DSEB--Machine-Learning_Group5\data\weather_hcm_daily.csv"
-hourly_data = get_data(hourly_path)
-
-# Lightweight local cleaning (avoid expensive time-based interpolation)
-# Use this instead of calling `clean_data()` to prevent long-running
-# pandas `interpolate(method='time')` on large datasets. This keeps the
-# cleaning conservative but fast.
-hourly_data = hourly_data.copy()
-# Parse datetime if present
-if 'datetime' in hourly_data.columns:
-    hourly_data['datetime'] = pd.to_datetime(hourly_data['datetime'], errors='coerce')
-
-# Drop known non-essential columns if present
-hourly_data.drop(columns=['description', 'sunrise', 'sunset'], errors='ignore', inplace=True)
-
-# Drop columns with a single unique value (uninformative)
-try:
-    uni_value = hourly_data.nunique()
-    cols = uni_value[uni_value == 1].index.tolist()
-    if cols:
-        hourly_data.drop(columns=cols, errors='ignore', inplace=True)
-except Exception:
-    pass
-
-# Interpolate numeric columns (fast, non-time method). If datetime index
-# exists we still set it for alignment but avoid method='time'.
-try:
-    num_cols = hourly_data.select_dtypes(include=['float64', 'int64']).columns
-    if 'datetime' in hourly_data.columns:
-        hourly_data = hourly_data.set_index('datetime')
-        if len(num_cols) > 0:
-            hourly_data[num_cols] = hourly_data[num_cols].interpolate(limit_direction='both')
-        hourly_data = hourly_data.reset_index()
-    else:
-        if len(num_cols) > 0:
-            hourly_data[num_cols] = hourly_data[num_cols].interpolate(limit_direction='both')
-except Exception:
-    pass
-
-# Forward/backward fill categorical/object columns
-try:
-    cat_cols = hourly_data.select_dtypes(include=['object']).columns
-    if len(cat_cols) > 0:
-        hourly_data[cat_cols] = hourly_data[cat_cols].ffill().bfill()
-except Exception:
-    pass
-
-# Drop duplicates conservatively
-try:
-    hourly_data = hourly_data.reset_index(drop=True)
-    hourly_data.drop_duplicates(inplace=True)
-except Exception:
-    pass
-
-# Continue with feature transforms
-hourly_data = basic_transform(hourly_data)
-hourly_data = drop_unnecessary_columns(hourly_data)
-hourly_data = extract_datetime_features(hourly_data)
-hourly_data.set_index('datetime', inplace=True)
-hourly_data.sort_index(inplace=True)
-
-# Key columns for hourly (adjusted, e.g., no tempmax/min)
-key_columns_hourly = ['temp', 'feelslike', 'humidity', 'dew', 'solarradiation', 'cloudcover', 'windspeed']
-encoded_cols_hourly = [col for col in hourly_data.columns if col.startswith(('icon_', 'conditions_'))]
-key_columns_hourly.extend(encoded_cols_hourly)
-
-# Lags and windows for hourly: short-term (1-3h), medium (6-12h), daily (24h)
-def create_lag_features_fast(df, columns, lags=[1,2,3,6,12,24]):
-    # inplace lag creation to avoid full DataFrame copies
-    for col in columns:
-        if col not in df.columns:
-            continue
-        for lag in lags:
-            df[f'{col}_lag_{lag}'] = df[col].shift(lag)
-    return df
-
-def create_rolling_features_fast(df, columns, windows=[3,6,12,24]):
-    # inplace rolling features; mean and std shifted by 1 to avoid leakage
-    for col in columns:
-        if col not in df.columns:
-            continue
-        s = df[col]
-        for window in windows:
-            df[f'{col}_roll_mean_{window}'] = s.rolling(window=window).mean().shift(1)
-            df[f'{col}_roll_std_{window}'] = s.rolling(window=window).std().shift(1)
-    return df
-
-# Use faster in-place builders to avoid expensive copies in feature_engineering
-hourly_data = create_lag_features_fast(hourly_data, key_columns_hourly, lags=[1, 2, 3, 6, 12, 24])
-hourly_data = create_rolling_features_fast(hourly_data, key_columns_hourly, windows=[3, 6, 12, 24])
-
-# Ensure expected columns used by feature functions exist. The shared
-# `create_interactive_features` expects `windspeedmean` and `dew`. Some
-# hourly datasets use `windspeed` instead of `windspeedmean` or may be
-# missing Dew; create safe fallbacks to avoid KeyError while keeping
-# semantics reasonable.
-if 'windspeedmean' not in hourly_data.columns:
-    if 'windspeed' in hourly_data.columns:
-        hourly_data['windspeedmean'] = hourly_data['windspeed']
-    else:
-        # create the column with NaNs so downstream code works without KeyError
-        hourly_data['windspeedmean'] = np.nan
-
-if 'dew' not in hourly_data.columns:
-    # try common alternative names, otherwise fill with NaN
-    if 'dewpoint' in hourly_data.columns:
-        hourly_data['dew'] = hourly_data['dewpoint']
-    else:
-        hourly_data['dew'] = np.nan
-
-hourly_data = create_interactive_features(hourly_data)
-
-# Targets: next 1 hour (single-value target per sequence)
-Y_hourly = create_targets(hourly_data, horizons=1)
-drop_cols_hourly = ['temp', 'feelslike']  # Drop current temp-related
-X_hourly = hourly_data.drop(columns=drop_cols_hourly, errors='ignore')
-
-# Drop NaNs from shifts
-combined_hourly = pd.concat([X_hourly, Y_hourly], axis=1).dropna()
-X_hourly = combined_hourly[X_hourly.columns]
-Y_hourly = combined_hourly[Y_hourly.columns]
-
-
-def create_sliding_windows(X_df, Y_df, seq_len):
-        """
-        Create sliding windows from X and align Y to the window end.
-        X_df: DataFrame of shape (T, n_features)
-        Y_df: DataFrame of shape (T, horizon)
-        Returns:
-            X_seq: numpy array (N, seq_len, n_features)
-            Y_seq: numpy array (N, horizon)
-        where N = T - seq_len + 1
-        """
-        X_arr = X_df.values
-        Y_arr = Y_df.values
-        T = X_arr.shape[0]
-        if T < seq_len:
-                return np.empty((0, seq_len, X_arr.shape[1])), np.empty((0, Y_arr.shape[1]))
-        N = T - seq_len + 1
-        X_seq = np.stack([X_arr[i:i+seq_len] for i in range(N)], axis=0)
-        # Align target to the last time step of each window
-        Y_seq = np.stack([Y_arr[i+seq_len-1] for i in range(N)], axis=0)
-        return X_seq, Y_seq
-
-
-# --- Create sliding windows (sequence length) for LSTM input ---
-seq_len = 12  # change this to the desired sequence length
-X_seq, Y_seq = create_sliding_windows(X_hourly, Y_hourly, seq_len=seq_len)
-print(f"Sliding windows created: X_seq shape={X_seq.shape}, Y_seq shape={Y_seq.shape}, seq_len={seq_len}")
-if X_seq.size == 0:
-    raise SystemExit("No sliding windows created: reduce seq_len or verify hourly data length after preprocessing.")
-
-# Chronological split on sequences
-n_h = len(X_seq)
-train_size_h = int(0.7 * n_h)
-val_size_h = int(0.15 * n_h)
-
-X_train_h = X_seq[:train_size_h]
-Y_train_h = Y_seq[:train_size_h]
-X_val_h = X_seq[train_size_h:train_size_h + val_size_h]
-Y_val_h = Y_seq[train_size_h:train_size_h + val_size_h]
-X_test_h = X_seq[train_size_h + val_size_h:]
-Y_test_h = Y_seq[train_size_h + val_size_h:]
-
-# Scaling in pipeline-like manner
-# For sequences we fit scaler on the reshaped 2D array (samples*time, features)
-nsamples, seq_len_actual, nfeatures = X_train_h.shape
-
-def manual_robust_scale_sequences(X_train, X_val=None, X_test=None, max_samples=50000, random_state=42):
-    """Compute per-feature median and IQR on a sample and scale arrays accordingly.
-    Returns scaled arrays and (median, iqr) to inverse-transform if needed.
+# Train XGB model
+def train_xgb_model(X_train, Y_train, X_val, Y_val, task_name='Daily_XGB_1Day', log_to_clearml=True, **xgb_kwargs):
     """
-    np.random.seed(random_state)
-    train_2d = X_train.reshape(-1, nfeatures)
-    n_total = train_2d.shape[0]
-    sample_n = min(n_total, max_samples)
-    if sample_n < n_total:
-        idx = np.random.choice(n_total, sample_n, replace=False)
-        sample = train_2d[idx]
-    else:
-        sample = train_2d
+    Train XGBoost model with given parameters.
+    Args:
+        X_train, Y_train, X_val, Y_val: Training and validation data.
+        task_name (str): ClearML task name for logging.
+        log_to_clearml (bool): Whether to log to ClearML.
+        xgb_kwargs: XGBoost hyperparameters.
+    Returns:
+        Pipeline: Trained model pipeline.
+        dict: Validation metrics.
+        array: Validation predictions.
+    """
+    if log_to_clearml:
+        task = init_clearml_task(project_name='HCM_Temp_Forecast', task_name=task_name, hyperparams=xgb_kwargs)
+    
+    # Create pipeline with scaling and model
+    pipeline = Pipeline([
+        ('scaler', RobustScaler()),
+        ('model', XGBRegressor(**xgb_kwargs))
+    ])
+    pipeline.fit(X_train, Y_train)
+    
+    # Predict and compute metrics
+    preds_val = pipeline.predict(X_val)
+    metrics = compute_metrics(Y_val, preds_val)
+    
+    if log_to_clearml:
+        # Log metrics, model, and prediction plot to ClearML
+        log_metrics(metrics)
+        log_model_artifact(pipeline, f'xgb_model_{task_name.lower()}.joblib')
+        log_prediction_plot(Y_val.values, preds_val, f'xgb_val_plot_{task_name.lower()}.png', 
+                          title=f"{task_name} Predictions", series="Temp Forecast")
+        close_clearml_task()
+    
+    return pipeline, metrics, preds_val
 
-    med = np.median(sample, axis=0)
-    q75 = np.percentile(sample, 75, axis=0)
-    q25 = np.percentile(sample, 25, axis=0)
-    iqr = q75 - q25
-    # avoid division by zero
-    iqr[iqr == 0] = 1.0
+# Compare pre- and post-tuning metrics
+def compare_models(pre_metrics, post_metrics, set_name="Validation"):
+    """
+    Print comparison of pre- and post-tuning metrics (R2, RMSE, MAPE).
+    Args:
+        pre_metrics (dict): Metrics for pre-tuning model.
+        post_metrics (dict): Metrics for post-tuning model.
+        set_name (str): Name of dataset (e.g., Validation, Test).
+    """
+    print(f"\n{set_name} Metrics Comparison (Pre-Tuning vs Post-Tuning):")
+    print(f"{'Metric':<10} {'Pre-Tuning':<12} {'Post-Tuning':<12} {'Improvement':<12}")
+    print("-" * 46)
+    for metric in ['rmse', 'mape', 'r2']:
+        pre_value = pre_metrics[metric]
+        post_value = post_metrics[metric]
+        # Improvement: negative for RMSE/MAPE (lower is better), positive for R2 (higher is better)
+        improvement = (pre_value - post_value) / pre_value * 100 if metric != 'r2' else (post_value - pre_value) / pre_value * 100
+        print(f"{metric.upper():<10} {pre_value:.4f} {'':<6} {post_value:.4f} {'':<6} {improvement:.2f}%")
 
-    def scale_array(arr):
-        if arr.size == 0:
-            return arr
-        arr2 = arr.reshape(-1, nfeatures)
-        arr2 = (arr2 - med) / iqr
-        return arr2.reshape(arr.shape)
+# Plot metrics comparison
+def plot_metrics_comparison(pre_metrics_val, post_metrics_val, pre_metrics_test, post_metrics_test):
+    """
+    Plot bar chart comparing R2, RMSE, MAPE for pre- and post-tuning models (validation and test sets).
+    Args:
+        pre_metrics_val, post_metrics_val: Validation metrics for pre- and post-tuning.
+        pre_metrics_test, post_metrics_test: Test metrics for pre- and post-tuning.
+    Returns:
+        matplotlib.figure.Figure: The created figure.
+    """
+    metrics = ['RMSE', 'MAPE', 'R2']
+    pre_values_val = [pre_metrics_val['rmse'], pre_metrics_val['mape'], pre_metrics_val['r2']]
+    post_values_val = [post_metrics_val['rmse'], post_metrics_val['mape'], post_metrics_val['r2']]
+    pre_values_test = [pre_metrics_test['rmse'], pre_metrics_test['mape'], pre_metrics_test['r2']]
+    post_values_test = [post_metrics_test['rmse'], post_metrics_test['mape'], post_metrics_test['r2']]
+    
+    x = np.arange(len(metrics))
+    width = 0.35
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Validation set
+    ax1.bar(x - width/2, pre_values_val, width, label='Pre-Tuning', color='#ff7f0e')
+    ax1.bar(x + width/2, post_values_val, width, label='Post-Tuning', color='#2ca02c')
+    ax1.set_title('Validation Set Metrics')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(metrics)
+    ax1.set_ylabel('Value')
+    ax1.legend()
+    
+    # Test set
+    ax2.bar(x - width/2, pre_values_test, width, label='Pre-Tuning', color='#ff7f0e')
+    ax2.bar(x + width/2, post_values_test, width, label='Post-Tuning', color='#2ca02c')
+    ax2.set_title('Test Set Metrics')
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(metrics)
+    ax2.set_ylabel('Value')
+    ax2.legend()
+    
+    plt.tight_layout()
+    return fig
 
-    X_train_s = scale_array(X_train)
-    X_val_s = scale_array(X_val) if X_val is not None and X_val.size else X_val
-    X_test_s = scale_array(X_test) if X_test is not None and X_test.size else X_test
-    return X_train_s, X_val_s, X_test_s, med, iqr
+if __name__ == '__main__':
+    print('\n--- Training Pre-Tuning Model (Default Params) ---')
+    # Default parameters for pre-tuning
+    default_params = {
+        'n_estimators': 100,
+        'learning_rate': 0.05,
+        'max_depth': 5,
+        'random_state': 42
+    }
+    pre_model, pre_metrics, pre_preds_val = train_xgb_model(
+        X_train, Y_train, X_val, Y_val, 
+        task_name='Daily_XGB_PreTuning', 
+        log_to_clearml=True, 
+        **default_params
+    )
+    
+    print('\n--- Hyperparameter Tuning with Optuna ---')
+    # Run Optuna tuning
+    best_params, best_rmse = tune_xgb_model(X_train, Y_train, X_val, Y_val, train_xgb_model, n_trials=20)
+    
+    print('\n--- Training Post-Tuning Model (Best Params) ---')
+    # Train post-tuning model with best params
+    best_params['random_state'] = 42
+    post_model, post_metrics, post_preds_val = train_xgb_model(
+        X_train, Y_train, X_val, Y_val, 
+        task_name='Daily_XGB_PostTuning', 
+        log_to_clearml=True, 
+        **best_params
+    )
+    
+    # Compare metrics on validation set
+    compare_models(pre_metrics, post_metrics, set_name="Validation")
+    
+    # Evaluate both models on test set
+    pre_preds_test = pre_model.predict(X_test)
+    post_preds_test = post_model.predict(X_test)
+    pre_test_metrics = compute_metrics(Y_test, pre_preds_test)
+    post_test_metrics = compute_metrics(Y_test, post_preds_test)
+    
+    # Compare metrics on test set
+    compare_models(pre_test_metrics, post_test_metrics, set_name="Test")
+    # --- Log Comparison Table to ClearML ---
 
+    # Create a summary DataFrame for validation and test metrics
+    comparison_data = {
+        'Metric': ['RMSE', 'MAPE', 'R2'],
+        'Pre-Tuning (Val)': [pre_metrics['rmse'], pre_metrics['mape'], pre_metrics['r2']],
+        'Post-Tuning (Val)': [post_metrics['rmse'], post_metrics['mape'], post_metrics['r2']],
+        'Pre-Tuning (Test)': [pre_test_metrics['rmse'], pre_test_metrics['mape'], pre_test_metrics['r2']],
+        'Post-Tuning (Test)': [post_test_metrics['rmse'], post_test_metrics['mape'], post_test_metrics['r2']],
+    }
 
-# Scale sequences using manual robust scaler (sample-based)
-X_train_h, X_val_h, X_test_h, x_med, x_iqr = manual_robust_scale_sequences(X_train_h, X_val_h, X_test_h)
+    comparison_df = pd.DataFrame(comparison_data)
 
-# Scale Y per-output (no sequence dimension)
-scaler_y_h = StandardScaler().fit(Y_train_h)
-Y_train_h = scaler_y_h.transform(Y_train_h)
-if len(Y_val_h) > 0:
-    Y_val_h = scaler_y_h.transform(Y_val_h)
-if len(Y_test_h) > 0:
-    Y_test_h = scaler_y_h.transform(Y_test_h)
+    # Compute improvement percentages
+    comparison_df['Val_Improvement (%)'] = [
+        (pre_metrics['rmse'] - post_metrics['rmse']) / pre_metrics['rmse'] * 100,
+        (pre_metrics['mape'] - post_metrics['mape']) / pre_metrics['mape'] * 100,
+        (post_metrics['r2'] - pre_metrics['r2']) / pre_metrics['r2'] * 100
+    ]
+    comparison_df['Test_Improvement (%)'] = [
+        (pre_test_metrics['rmse'] - post_test_metrics['rmse']) / pre_test_metrics['rmse'] * 100,
+        (pre_test_metrics['mape'] - post_test_metrics['mape']) / pre_test_metrics['mape'] * 100,
+        (post_test_metrics['r2'] - pre_test_metrics['r2']) / pre_test_metrics['r2'] * 100
+    ]
 
-# PyTorch Dataset
-class TimeSeriesDataset(Dataset):
-    def __init__(self, X, y):
-        # X: (N, seq_len, features), y: (N, horizon)
-        self.X = torch.tensor(X, dtype=torch.float32)
-        self.y = torch.tensor(y, dtype=torch.float32)
+    # Start a new ClearML task for the table
+    table_task = init_clearml_task(project_name='HCM_Temp_Forecast', task_name='Metrics_Comparison_Table')
 
-    def __len__(self):
-        return self.X.shape[0]
+    # Log table as an artifact (CSV)
+    comparison_csv_path = 'outputs/metrics_comparison_table.csv'
+    comparison_df.to_csv(comparison_csv_path, index=False)
+    log_model_artifact(comparison_csv_path, 'metrics_comparison_table.csv')
 
-    def __getitem__(self, idx):
-        return self.X[idx], self.y[idx]
+    # Or log directly as a table visualization
+    logger = table_task.get_logger()
+    logger.report_table(
+        title='Pre vs Post Tuning Metrics Comparison',
+        series='Metrics Summary',
+        iteration=0,
+        table_plot=comparison_df
+    )
 
-train_dataset = TimeSeriesDataset(X_train_h, Y_train_h)
-val_dataset = TimeSeriesDataset(X_val_h, Y_val_h)
-test_dataset = TimeSeriesDataset(X_test_h, Y_test_h)
+    close_clearml_task()
+    
+    # Save final model (post-tuning)
+    os.makedirs('outputs/models', exist_ok=True)
+    joblib.dump(post_model, 'outputs/models/xgb_final.joblib')
 
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=False)  # No shuffle for time series
-val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
-
-# Pipeline for LSTM
-class LSTMModel(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, output_size=1):
-        super(LSTMModel, self).__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_size, output_size)
-
-    def forward(self, x):
-        # x expected shape: (batch, seq_len, input_size)
-        out, _ = self.lstm(x)
-        out = self.fc(out[:, -1, :])
-        return out
-def train_lstm(model, train_loader, val_loader, criterion, optimizer, n_epochs=50):
-    for epoch in range(n_epochs):
-        model.train()
-        for X_batch, Y_batch in train_loader:
-            optimizer.zero_grad()
-            outputs = model(X_batch)
-            loss = criterion(outputs, Y_batch)
-            loss.backward()
-            optimizer.step()
-        model.eval()
-        val_loss = 0
-        with torch.no_grad():
-            for X_batch, Y_batch in val_loader:
-                outputs = model(X_batch)
-                val_loss += criterion(outputs, Y_batch).item()
-        print(f'Epoch {epoch+1}, Val Loss: {val_loss/len(val_loader)}')
-    return model
+    print('\nAll done. Models saved to outputs/models/. View logs at: https://app.clear.ml')
