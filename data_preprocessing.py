@@ -5,10 +5,11 @@ import seaborn as sns
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
-import os  # For creating output directory
+
+import os  
 
 def get_data(path):
     """ get data from downloaded datasets and also update real time data"""
@@ -134,70 +135,56 @@ def create_interactive_features(df):
     df_copy['dew_wind_interact'] = df_copy['dew'] * df_copy['windspeedmean']
     return df_copy
 
-def select_features_with_rf(X, y, importance_threshold=0.0065):
-    """
-    Use Random Forest to select features with importance >= threshold.
-    - Train RF on X and y (single target, e.g., 1-day ahead).
-    - Returns selected X with features meeting the threshold.
-    """
-    valid_idx = y.notna()
-    X = X[valid_idx]
-    y = y[valid_idx]
-    
-    rf = RandomForestRegressor(n_estimators=100, random_state=42)
-    rf.fit(X, y)
-    
-    importances = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)
-    print("Top Feature Importances:\n", importances.head(20))
-    print(f"\nNumber of features with importance >= {importance_threshold}: {sum(importances >= importance_threshold)}")
-    
-    top_features = importances[importances >= importance_threshold].index
-    X_selected = X[top_features]
-    
-    return X_selected, importances
-
-
-def select_features_with_rf_xgb_plot(X, y, importance_threshold=0.0065, top_n=20):
+def select_features_with_rf_xgb_plot(X, y,max_estimators=300, cumulative_threshold=0.91):
     """
     Kết hợp RandomForest & XGBoost để chọn feature + vẽ biểu đồ importance.
     """
     # Lọc giá trị hợp lệ
     valid_idx = y.notna()
-    X = X.loc[valid_idx]
-    y = y.loc[valid_idx]
+    X, y = X.loc[valid_idx], y.loc[valid_idx]
 
     # Train RandomForest
-    rf = RandomForestRegressor(n_estimators=200, random_state=42)
+    rf = RandomForestRegressor(n_estimators=max_estimators,random_state=42,n_jobs=-1)
     rf.fit(X, y)
     rf_imp = pd.Series(rf.feature_importances_, index=X.columns)
 
     #  Train XGBoost
     xgb = XGBRegressor(
-        n_estimators=300,
+        n_estimators=max_estimators,
         learning_rate=0.05,
         max_depth=5,
         subsample=0.9,
         colsample_bytree=0.9,
         random_state=42,
         n_jobs=-1,
-        verbosity=0
+        verbosity=0,
+        eval_metric='rmse'
     )
     xgb.fit(X, y)
     xgb_imp = pd.Series(xgb.feature_importances_, index=X.columns)
 
-
+    #  Kết hợp RF + XGB
     combined_imp = (rf_imp + xgb_imp) / 2
     combined_imp = combined_imp.sort_values(ascending=False)
-    selected_features = combined_imp[combined_imp >= importance_threshold].index
-    X_selected = X[selected_features]
 
-    return X_selected, combined_imp
+    #  Tính cumulative importance
+    cum_imp = combined_imp.cumsum() / combined_imp.sum()
+
+    # Chọn feature cho đến khi cumulative importance đạt ngưỡng
+    selected_features = cum_imp[cum_imp <= cumulative_threshold].index
+    threshold = combined_imp[selected_features].min()
+
+    return X[selected_features], combined_imp, threshold
+
+
 
 def extract_feature(data):
     data = data.sort_values('datetime').reset_index(drop=True)
 
     data = basic_transform(data)
     data = extract_datetime_features(data)
+    data.set_index('datetime', inplace=True)
+    data.sort_index(inplace=True)
 
     key_columns = ['temp', 'tempmax', 'tempmin', 'feelslike', 'humidity', 'dew', 'solarradiation', 'cloudcover', 'windspeedmean']
     encoded_cols = [col for col in data.columns if col.startswith(('icon_', 'conditions_'))]
@@ -206,46 +193,66 @@ def extract_feature(data):
     data = create_rolling_features(data, key_columns)
     data = create_interactive_features(data)
     
+    data = data.dropna().reset_index()
+
     X = data.drop(['temp', 'datetime'], axis = 1, errors='ignore')
     y = data['temp']
     
-    X_selected, importances = select_features_with_rf_xgb_plot(X, y)
+    X_selected, importance, threshold = select_features_with_rf_xgb_plot(X, y)
     X = X[X_selected.columns]
-    def remove_highly_correlated_features(X, threshold=0.9):
+    def remove_highly_correlated_features(X, importance, threshold=0.9):
         """
-        Delete features that are correlated with other features.
+        Xóa bớt feature tương quan cao, GIỮ lại feature có importance cao hơn.
         """
         corr_matrix = X.corr().abs()
         upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+
+        # Lấy toàn bộ cặp feature có correlation > threshold
+        high_corr_pairs = (
+            upper.stack()
+            .reset_index()
+            .rename(columns={0: "corr"})
+            .query("corr > @threshold")
+        )
+
+        to_drop = set()
+
+        for _, (feat1, feat2, corr_val) in high_corr_pairs.iterrows():
+            # Bỏ qua nếu 1 trong 2 đã bị loại
+            if feat1 in to_drop or feat2 in to_drop:
+                continue
+
+            imp1 = importance.get(feat1, 0)
+            imp2 = importance.get(feat2, 0)
+
+            # GIỮ feature có importance cao hơn
+            if imp1 < imp2:
+                to_drop.add(feat1)
+            else:
+                to_drop.add(feat2)
+
+        X_reduced = X.drop(columns=list(to_drop), errors="ignore")
+
+        print(f" Đã loại {len(to_drop)} feature tương quan cao:")
+        print(list(to_drop))
+        print(f" Còn lại {X_reduced.shape[1]} features sau khi lọc.")
         
-        # Danh sách cột cần loại
-        to_drop = [column for column in upper.columns if any(upper[column] > threshold)]
-        
-        X_reduced = X.drop(columns=to_drop)
-        print(f"Dropped {len(to_drop)} highly correlated features: {to_drop}")
         return X_reduced
-    
-    X = remove_highly_correlated_features(X)
-    
+    X = remove_highly_correlated_features(X, importance)
+
     X.dropna(inplace=True)
-    y = y.loc[X.index] 
-    
+    y = y.loc[X.index]  # giữ đồng bộ index
     return X, y
 
-
-
-import pandas as pd
-import os
-
 def main():
-    # 1️⃣ Load data
+    #  Load data
     path = "https://raw.githubusercontent.com/7hufofbun/DSEB--Machine-Learning_Group5/refs/heads/main/data/weather_hcm_daily.csv"
     data = pd.read_csv(path)
     
-    # 2️⃣ Gọi hàm extract_feature đã viết sẵn
+    #  Gọi hàm extract_feature đã viết sẵn
     X, y = extract_feature(data)
     
-    # 3️⃣ In ra thông tin cơ bản
+    #  In ra thông tin cơ bản
     print("X shape:", X.shape)
     print("Y shape:", y.shape)
     print("\nX head:")
@@ -253,7 +260,7 @@ def main():
     print("\nY head:")
     print(y.head())
     
-    # 4️⃣ Export nếu muốn
+    #  Export nếu muốn
     os.makedirs('outputs', exist_ok=True)
     X.to_csv('outputs/X_features.csv', index=True)
     y.to_csv('outputs/Y_target.csv', index=True)
