@@ -59,10 +59,13 @@ def basic_cleaning(data):
     return data
 
         
-def feature_engineer_X(X, y,  lags=[1, 2, 3, 7, 14, 30], roll_windows=[3, 7, 14, 30]):
+def feature_engineer_X(X, y = None,  lags=[1, 2, 3, 7, 14, 30], roll_windows=[3, 7, 14, 30]):
     df = X.copy()
-    df['temp'] = y
-
+    if y is not None:
+        df['temp'] = y
+        has_target = True
+    else:
+        has_target = False
     df = df.sort_values('datetime').reset_index(drop=True)
 
     # Extract datetime features
@@ -84,28 +87,38 @@ def feature_engineer_X(X, y,  lags=[1, 2, 3, 7, 14, 30], roll_windows=[3, 7, 14,
     df.drop(['sunrise', 'sunset', 'sunrise_hour', 'sunset_hour'], axis=1, inplace=True)
 
     # create features for x
-    columns = ['temp','tempmax', 'tempmin', 'feelslike', 'dew', 'humidity', 'windspeed', 'windgust', 'sealevelpressure', 'precip', 'solarradiation', 'solarenergy', 'cloudcover']
+    columns = ['tempmax', 'tempmin', 'feelslike', 'dew', 'humidity', 'windspeed', 'windgust', 'sealevelpressure', 'precip', 'solarradiation', 'solarenergy', 'cloudcover']
     # create lag features
     for col in columns:
         if col in df.columns:
             for lag in lags:
                 df[f'{col}_lag_{lag}'] = df[col].shift(lag)
-    
-    # create rolling features
+    # create rolling features 
     for col in columns:
         if col in df.columns:
             for window in roll_windows:
                 df[f'{col}_roll_mean_{window}'] = df[col].shift(1).rolling(window=window).mean()
                 df[f'{col}_roll_std_{window}'] = df[col].shift(1).rolling(window=window).std()
 
+    # create lag and rolling features for temp(y)
+    if has_target:
+        for lag in lags:
+            df[f'temp_lag_{lag}'] = df['temp'].shift(lag)
+        for window in roll_windows:
+            df[f'temp_roll_mean_{window}'] = df['temp'].shift(1).rolling(window=window).mean()
+            df[f'temp_roll_std_{window}'] = df['temp'].shift(1).rolling(window=window).std()
+
     #create interaction features
-    df['temp_humidity_interact'] = df['temp'] * df['humidity']
+    df['temp_humidity_interact'] = df['tempmax'] * df['humidity']
     df['effective_solar'] = df['solarradiation'] / (df['cloudcover'] + 1)
     df['dew_wind_interact'] = df['dew'] * df['windspeedmean']
 
-    X = df.drop(['temp'], axis=1)
-    y = df['temp']
-    return X, y
+    if has_target:
+        X_processed = df.drop(['temp'], axis=1)
+        y_processed = df['temp']
+        return X_processed, y_processed
+    else:
+        return df
 
 
 
@@ -276,7 +289,7 @@ def main():
     print(train_x.head())
     print("\nTrain y head:")
     print(train_y.head())
-    
+    print(train_x.isnull().sum())
     # Export 
     os.makedirs('outputs', exist_ok=True)
     train_x.to_csv('outputs/X_features.csv', index=True)
