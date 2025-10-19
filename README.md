@@ -1,6 +1,6 @@
 # Project: Ho Chi Minh Temperture Forecasting _ Group 6
 1. Introduction
-This project focuses on forecasting daily (hourly) temperature in Ho Chi Minh using 10 years of historical weather data from Visual Crossing. By analyzing meteorological features such as humidity, solar radiation, precipitation, and moon phase, we aim to build an accurate machine learning model for short-term temperature prediction. The workflow includes data processing, feature engineering, model training, hyperparameter tuning, and deployment via a user-friendly web interface.
+- This project focuses on forecasting daily (hourly) temperature in Ho Chi Minh using 10 years of historical weather data from Visual Crossing. By analyzing meteorological features such as humidity, solar radiation, precipitation, and moon phase, we aim to build an accurate machine learning model for short-term temperature prediction. The workflow includes data processing, feature engineering, model training, hyperparameter tuning, and deployment via a user-friendly web interface.
 3. Process (process is designed to be more suitable with the pipeline)
 - Basic cleaning:
   + Dropping unecessary columns such as description, venue, longtitude,...
