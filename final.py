@@ -9,6 +9,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import TimeSeriesSplit
 import optuna
+from sklearn.feature_selection import VarianceThreshold
 from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import FloatTensorType
 import onnxruntime as rt
@@ -26,17 +27,10 @@ def get_data(path):
 
 def basic_cleaning(data):
     data = data.drop_duplicates()
-    # Drop unnecessary columns
-    uni_value = data.nunique()
-    col = uni_value[uni_value == 1].index
-    data.drop(col, axis=1, inplace=True)
-    data.drop(['description'], axis=1, inplace=True, errors='ignore')
-
-    # Normalize dtypes
     data['datetime'] = pd.to_datetime(data['datetime'])
     data['sunrise'] = pd.to_datetime(data['sunrise'])
     data['sunset'] = pd.to_datetime(data['sunset'])
-
+    data.drop('description', axis=1, inplace=True, errors='ignore')
     return data
 
 class SmartCorrelationReducer(BaseEstimator, TransformerMixin):
@@ -101,159 +95,186 @@ class SmartCorrelationReducer(BaseEstimator, TransformerMixin):
         return X[keep_cols]
 
 class Preprocessing(BaseEstimator, TransformerMixin):
-    def __init__(self, lower=0.05, upper=0.95, threshold=50, datetime_col='datetime'):
-        self.lower = lower
-        self.upper = upper  
-        self.threshold = threshold
-        self.datetime_col = datetime_col
-        
+    def __init__(self, threshold=50, var_threshold=0.0):
+        self.threshold = threshold               
+        self.var_threshold = var_threshold       
+        self.datetime_cols = ['datetime', 'sunrise', 'sunset']
+
     def fit(self, X, y=None):
         df = X.copy()
-        
-        # ĐẢM BẢO datetime column được giữ lại
-        if self.datetime_col not in df.columns:
-            raise ValueError(f"datetime column '{self.datetime_col}' not found in data")
-        
-        # Identify numerical and categorical cols (EXCLUDE datetime from processing)
-        temp_df = df.drop(columns=[self.datetime_col])
+
+        # Drop datetime types columns for fitting
+        temp_df = df.drop(columns=self.datetime_cols, errors='ignore')
+
+        # Identify numerical and categorical columns
         self.numeric_cols_ = temp_df.select_dtypes(include='number').columns.tolist()
         self.categorical_cols_ = temp_df.select_dtypes(include='object').columns.tolist()
 
-        # Identify columns with missing values below threshold
-        percentage_missing = temp_df.isnull().sum() * 100 / len(temp_df)
-        self.cols_to_keep_ = percentage_missing[percentage_missing < self.threshold].index.tolist()
-        
-        self.numeric_cols_to_keep_ = [col for col in self.numeric_cols_ if col in self.cols_to_keep_]
-        self.categorical_cols_to_keep_ = [col for col in self.categorical_cols_ if col in self.cols_to_keep_]
-        
+        # Identify columns with only one unique value
+        unique_value = temp_df[self.categorical_cols_].nunique()
+        self.cat_cols_to_drop_ = unique_value[unique_value == 1].index.tolist()
 
-        # Fit OneHotEncoder
+        # Identidy columns with missing values above threshold
+        percentage_missing = temp_df.isnull().sum() * 100 / len(temp_df)
+        self.missing_cols_to_drop_ = percentage_missing[percentage_missing > self.threshold].index.tolist()
+
+        # Keep cols
+        self.numeric_cols_to_keep_ = [
+            col for col in self.numeric_cols_ if col not in self.missing_cols_to_drop_
+        ]
+        self.categorical_cols_to_keep_ = [
+            col for col in self.categorical_cols_ 
+            if col not in self.cat_cols_to_drop_ and col not in self.missing_cols_to_drop_
+        ]
+
+        # Drop
+        if len(self.numeric_cols_to_keep_) > 0:
+            selector = VarianceThreshold(threshold=self.var_threshold)
+            selector.fit(temp_df[self.numeric_cols_to_keep_].fillna(0))
+            self.numeric_cols_to_keep_ = [
+                self.numeric_cols_to_keep_[i] for i, keep in enumerate(selector.get_support()) if keep
+            ]
+
+        # Fit OneHotEncoder cho categorical
         if len(self.categorical_cols_to_keep_) > 0:
             self.ohe_ = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
             self.ohe_.fit(temp_df[self.categorical_cols_to_keep_])
         else:
             self.ohe_ = None
-        
+
+        # keep cols finally
+        self.keep_cols_ = self.numeric_cols_to_keep_ + self.categorical_cols_to_keep_
+
         return self
 
     def transform(self, X, y=None):
         df = X.copy()
-        
-        # ĐẢM BẢO datetime tồn tại
-        if self.datetime_col not in df.columns:
-            raise ValueError(f"datetime column '{self.datetime_col}' not found in transform")
-        
-        # Store datetime separately
-        datetime_values = df[self.datetime_col]
-        temp_df = df.drop(columns=[self.datetime_col])
-        
-        # Keep only selected columns
-        keep_cols = [c for c in self.cols_to_keep_ if c in temp_df.columns]
+
+        # Giữ datetime riêng (nếu có)
+        datetime_values = df[self.datetime_cols].copy() if all(col in df.columns for col in self.datetime_cols) else pd.DataFrame()
+
+        temp_df = df.drop(columns=self.datetime_cols, errors='ignore')
+
+        # Giữ lại các cột hợp lệ
+        keep_cols = [c for c in self.keep_cols_ if c in temp_df.columns]
         temp_df = temp_df[keep_cols]
 
-        # Impute numerical columns
+        # Impute numerical data
         for col in self.numeric_cols_to_keep_:
             if col in temp_df.columns:
                 temp_df[col] = temp_df[col].interpolate(method='linear').ffill().bfill()
-        
+
         # Encode categorical data
         if self.ohe_ is not None and len(self.categorical_cols_to_keep_) > 0:
             available_cat_cols = [col for col in self.categorical_cols_to_keep_ if col in temp_df.columns]
-            if available_cat_cols:
-                encoded = self.ohe_.transform(temp_df[available_cat_cols])
-                encoded_df = pd.DataFrame(
-                    encoded, 
-                    columns=self.ohe_.get_feature_names_out(available_cat_cols),
-                    index=temp_df.index
-                )
-                temp_df = pd.concat([temp_df.drop(columns=available_cat_cols), encoded_df], axis=1)
-        
-        # Add datetime back
-        temp_df[self.datetime_col] = datetime_values.values
-        
-        return temp_df
+            encoded = self.ohe_.transform(temp_df[available_cat_cols])
+            encoded_df = pd.DataFrame(
+                encoded,
+                columns=self.ohe_.get_feature_names_out(available_cat_cols),
+                index=temp_df.index
+            )
+            encoded_df.columns = [
+                col.lower().replace(' ', r'_').replace(',', r'_').replace('.', r'_')
+                for col in encoded_df.columns
+            ]
 
-def feature_engineer_X(X, y=None, lags=[1, 2, 3, 7, 14, 30], roll_windows=[3, 7, 14, 30]):
-    """Feature engineering - MUST have datetime column"""
+            temp_df = pd.concat([temp_df.drop(columns=available_cat_cols), encoded_df], axis=1)
+
+        # Add datetime back
+        if not datetime_values.empty:
+            clean = pd.concat([datetime_values, temp_df], axis=1)
+        else:
+            clean = temp_df
+
+        return clean
+
+def feature_engineer(X, y = None):
+
     df = X.copy()
-    
-    # ĐẢM BẢO datetime tồn tại
-    if 'datetime' not in df.columns:
-        raise ValueError("datetime column is required for feature engineering")
-    
-    # ĐẢM BẢO index consistency với y
     if y is not None:
-        # Reset index để đảm bảo alignment
         df = df.reset_index(drop=True)
         y = y.reset_index(drop=True) if hasattr(y, 'reset_index') else y
-        df['temp'] = y
-        has_target = True
-    else:
-        has_target = False
-    
-    # Sort by datetime
-    df = df.sort_values('datetime').reset_index(drop=True)
-    
-    # Get numeric columns (EXCLUDE target if exists)
-    current_numeric_cols = df.select_dtypes('number').columns.tolist()
-    if has_target and 'temp' in current_numeric_cols:
-        current_numeric_cols.remove('temp')
-    
-    # Extract datetime features
-    df['year'] = df['datetime'].dt.year
+        df['temp'] = y.values
+
+    # drop unnecessary and dubious columns
+    # drop feelslike because feelslike is computed by expected temp, humidity, winspeed => it use current data, similar and high correlated with temperature
+    # drop windspeed max/min/, windgust because winspeed => max windspeed over 1 hour and windgust => windspeed over 20 seconds => similar => keep windspeedmean
+    # drop precipcover because it is computed based on precip => unnecessary 
+    df = df.drop(['feelslike', 'feelslikemax', 'feelslikemin', 'windspeedmax', 'windspeedmin', 'winspeed', 'windgust', 'precipcover', 'solarenergy', 'moonphase', 'visibility'], axis = 1, errors = 'ignore')
+    current_cols = [i for i in df.columns.tolist() if i != 'temp']
+
+    df = df.sort_values('datetime')
+
+    # Create new feature follow group
+
     df['month'] = df['datetime'].dt.month
-    df['day'] = df['datetime'].dt.day
     df['dayofweek'] = df['datetime'].dt.dayofweek
-    df['quarter'] = df['datetime'].dt.quarter
     df['is_weekend'] = df['dayofweek'].isin([5, 6]).astype(int)
+    # temperature range
+    df['temp_range'] = df['tempmax'] - df['tempmin']
+    df['pressure_temp_ratio'] = df['sealevelpressure'] / (df['temp'] + 10)
+    df['temp_change'] = df['temp'] - df['temp'].shift(1)
+    # Day light, solar
+    df['daylight_hours'] = df['daylight_hours'] = (df['sunset'] - df['sunrise']).dt.total_seconds() / 3600
+    df['solar_intensity'] = df['solarradiation'] / (df['daylight_hours']+0.1)
+    df['effective_daylight'] = df['daylight_hours'] * (1 - df['cloudcover']/100)
+    df['daylight_change'] = df['daylight_hours'] - df['daylight_hours'].shift(1)
 
-    # Create new feature from sunset and sunrise 
-    df['sunrise_hour'] = df['sunrise'].dt.hour + df['sunrise'].dt.minute/60
-    df['sunset_hour'] = df['sunset'].dt.hour + df['sunset'].dt.minute/60
-    df['day_length_hours'] = df['sunset_hour'] - df['sunrise_hour']
-    df.drop(['sunrise', 'sunset', 'sunrise_hour', 'sunset_hour'], axis=1, inplace=True)
 
-    # Set datetime as index for time series operations
-    df.set_index('datetime', inplace=True)
-
-    # Update numeric columns list after creating new features
-    current_numeric_cols = current_numeric_cols + ['day_length_hours']
-    if has_target and 'temp' in current_numeric_cols:
-        current_numeric_cols.remove('temp')
+    # Wind and pressure
+    df['wind_dir_effect'] = np.sin(2 * np.pi * df['winddir'] / 360)
     
-    # Create lag features
-    for col in current_numeric_cols:
-        for lag in lags:
-            df[f'{col}_lag_{lag}'] = df[col].shift(lag)
+    # Rain and cloud
+    df['rain_streak'] = (df['precip'] > 0).astype(int).rolling(3).sum()  
+    df['precip_7d_cumsum'] = df['precip'].shift(1).rolling(7).sum()
+    df['has_rain_recently'] = (df['precip'].shift(1).rolling(3).sum() > 0).astype(int)
+    df['cloud_trend'] = df['cloudcover'] - df['cloudcover'].shift(1)
+    df['recent_rain_intensity'] = df['precip'].shift(1).rolling(5).mean()
+    #interaction
+    df['temp_humidity_interact'] = df['temp'] * df['humidity']
+    df['effective_solar'] = df['solarradiation'] / (df['cloudcover'] + 1)
+    df['solar_cloud_ratio'] = df['solarradiation'] / (df['cloudcover'] + 0.1)
+    df['wind_pressure_interact'] = df['windspeedmean'] * df['sealevelpressure']
+    df['pressure_temp_ratio'] = df['sealevelpressure'] / (df['temp'] + 10)
+    #seasonal
+    df['is_rainy_season'] = ((df['datetime'].dt.month >= 5) & (df['datetime'].dt.month <= 11)).astype(int)
+    df['month_sin'] = np.sin(2 * np.pi * df['datetime'].dt.month / 12)
+    df['month_cos'] = np.cos(2 * np.pi * df['datetime'].dt.month / 12)
+    df['dayofweek_sin'] = np.sin(2 * np.pi * df['dayofweek'] / 7)
+    df['dayofweek_cos'] = np.cos(2 * np.pi * df['dayofweek'] / 7)
+
+    cols = ['temp', 'dew', 'humidity', 'precip', 'precipprob', 'windspeedmean', 'winddir', 'sealevelpressure', 'cloudcover', 'solarradiation', 'uvindex', 
+            'temp_range', 'temp_change', 'daylight_hours', 'solar_intensity', 'effective_daylight', 'daylight_change', 'wind_dir_effect', 
+            'cloud_trend', 'temp_humidity_interact', 'effective_solar', 'solar_cloud_ratio', 'wind_pressure_interact', 'pressure_temp_ratio',
+            'conditions_clear', 'conditions_partially_cloudy', 'conditions_rain__overcast', 'conditions_rain__partially_cloudy', 'icon_clear-day', 'icon_partly-cloudy-day', 'icon_rain' ]
+
+    medium_term_features = [
+        'temp', 'dew', 'humidity', 'temp_range', 'sealevelpressure', 
+        'humidity', 'solarradiation', 'daylight_hours'
+    ]
+
+    for slag in [1,2,3]:
+        for col in cols:
+            df[f'{col}_lag_{slag}'] = df[col].shift(slag)
+    for col in ['temp', 'sealevelpressure']:  
+        if col in df.columns:
+            df[f'{col}_lag_4'] = df[col].shift(4)
+    for llag in [5,7]:
+        for col in medium_term_features:
+            df[f'{col}_lag_{llag}'] = df[col].shift(llag)
+    for w in [ 7, 14]:
+        for col in cols:
+            df[f'{col}_rolling_{w}'] = df[col].rolling(w).mean()
+    df['temp_momentum_1d'] = df['temp_lag_1'] - df['temp_lag_2']
+    df['temp_momentum_3d'] = df['temp_lag_1'] - df['temp_lag_4']
+    df['pressure_trend_3d'] = df['sealevelpressure_lag_1'] - df['sealevelpressure_lag_4']
+    df = df.drop(current_cols, axis=1, errors='ignore')
+    df = df.dropna(axis=0)
     
-    # Create rolling features 
-    for col in current_numeric_cols:
-        for window in roll_windows:
-            df[f'{col}_roll_mean_{window}'] = df[col].shift(1).rolling(window=window, min_periods=1).mean()
-            df[f'{col}_roll_std_{window}'] = df[col].shift(1).rolling(window=window, min_periods=1).std()
-
-    # Create lag and rolling features for temp(y)
-    if has_target:
-        for lag in lags:
-            df[f'temp_lag_{lag}'] = df['temp'].shift(lag)
-        for window in roll_windows:
-            df[f'temp_roll_mean_{window}'] = df['temp'].shift(1).rolling(window=window, min_periods=1).mean()
-            df[f'temp_roll_std_{window}'] = df['temp'].shift(1).rolling(window=window, min_periods=1).std()
-
-        # Create interaction features (using original columns, not lagged ones)
-    if 'temp_lag_1' in df.columns and 'humidity_lag_1' in df.columns:
-        df['temp_humidity_interact'] = df['temp_lag_1'] * df['humidity_lag_1']
-    if 'solarradiation_lag_1' in df.columns and 'cloudcover_lag_1' in df.columns:
-        df['effective_solar_lag_1'] = df['solarradiation_lag_1'] / (df['cloudcover_lag_1'] + 1)
-    if 'dew_lag_1' in df.columns and 'windspeed_lag_1' in df.columns:
-        df['dew_wind_interact'] = df['dew_lag_1'] * df['windspeed_lag_1']
-
-    df = df.dropna()
-    if has_target:
-        current_numeric_cols = current_numeric_cols + ['temp']
-        X_processed = df.drop(current_numeric_cols, axis=1)
-        y_processed = df['temp']
-        return X_processed, y_processed
+    if y is not None:
+        X = df.drop('temp', axis = 1)
+        y = df['temp']
+        return X, y
     else:
         return df
 
