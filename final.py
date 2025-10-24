@@ -237,7 +237,6 @@ def feature_engineer(X, y = None):
     df['wind_pressure_interact'] = df['windspeedmean'] * df['sealevelpressure']
     # df['pressure_temp_ratio'] = df['sealevelpressure'] / (df['temp'] + 10)
     #seasonal
-    df['is_rainy_season'] = ((df['datetime'].dt.month >= 5) & (df['datetime'].dt.month <= 11)).astype(int)
     df['month_sin'] = np.sin(2 * np.pi * df['datetime'].dt.month / 12)
     df['month_cos'] = np.cos(2 * np.pi * df['datetime'].dt.month / 12)
     df['dayofweek_sin'] = np.sin(2 * np.pi * df['dayofweek'] / 7)
@@ -265,7 +264,7 @@ def feature_engineer(X, y = None):
             df[f'{col}_lag_{llag}'] = df[col].shift(llag)
     for w in [ 7, 14]:
         for col in cols:
-            df[f'{col}_rolling_{w}'] = df[col].rolling(w).mean()
+            df[f'{col}_rolling_{w}'] = df[col].shift(1).rolling(w).mean()
     df['temp_momentum_1d'] = df['temp_lag_1'] - df['temp_lag_2']
     df['temp_momentum_3d'] = df['temp_lag_1'] - df['temp_lag_4']
     df['pressure_trend_3d'] = df['sealevelpressure_lag_1'] - df['sealevelpressure_lag_4']
