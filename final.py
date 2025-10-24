@@ -268,6 +268,8 @@ def feature_engineer(X, y = None):
     df['temp_momentum_1d'] = df['temp_lag_1'] - df['temp_lag_2']
     df['temp_momentum_3d'] = df['temp_lag_1'] - df['temp_lag_4']
     df['pressure_trend_3d'] = df['sealevelpressure_lag_1'] - df['sealevelpressure_lag_4']
+    current_cols = current_cols + ['temp-range', 'pressure_temp_ratio', 'temp_change', 'daylight_hours', 'solar_intensity', 'effective_daylight', 'daylight_change', 'wind_dir_effect', ' temp_humidity_interact', 'effective_solar', 'solar_cloud_ratio', 'wind_pressure_interact']
+
     df = df.drop(current_cols, axis=1, errors='ignore')
     df = df.dropna(axis=0)
     
