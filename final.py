@@ -225,7 +225,7 @@ def feature_engineer(X, y = None):
     df['wind_dir_effect'] = np.sin(2 * np.pi * df['winddir'] / 360)
     
     # Rain and cloud
-    df['rain_streak'] = (df['precip'] > 0).astype(int).rolling(3).sum()  
+    df['rain_streak'] = (df['precip'] > 0).astype(int).shift(1).rolling(3).sum()  
     df['precip_7d_cumsum'] = df['precip'].shift(1).rolling(7).sum()
     df['has_rain_recently'] = (df['precip'].shift(1).rolling(3).sum() > 0).astype(int)
     df['cloud_trend'] = df['cloudcover'] - df['cloudcover'].shift(1)
@@ -235,7 +235,7 @@ def feature_engineer(X, y = None):
     df['effective_solar'] = df['solarradiation'] / (df['cloudcover'] + 1)
     df['solar_cloud_ratio'] = df['solarradiation'] / (df['cloudcover'] + 0.1)
     df['wind_pressure_interact'] = df['windspeedmean'] * df['sealevelpressure']
-    df['pressure_temp_ratio'] = df['sealevelpressure'] / (df['temp'] + 10)
+    # df['pressure_temp_ratio'] = df['sealevelpressure'] / (df['temp'] + 10)
     #seasonal
     df['is_rainy_season'] = ((df['datetime'].dt.month >= 5) & (df['datetime'].dt.month <= 11)).astype(int)
     df['month_sin'] = np.sin(2 * np.pi * df['datetime'].dt.month / 12)
@@ -244,7 +244,7 @@ def feature_engineer(X, y = None):
     df['dayofweek_cos'] = np.cos(2 * np.pi * df['dayofweek'] / 7)
 
     cols = ['temp', 'dew', 'humidity', 'precip', 'precipprob', 'windspeedmean', 'winddir', 'sealevelpressure', 'cloudcover', 'solarradiation', 'uvindex', 
-            'temp_range', 'temp_change', 'daylight_hours', 'solar_intensity', 'effective_daylight', 'daylight_change', 'wind_dir_effect', 
+            'temp_range', 'temp_change', 'daylight_hours', 'solar_intensity', 'effective_daylight', 'daylight_change', 'wind_dir_effect',  
             'cloud_trend', 'temp_humidity_interact', 'effective_solar', 'solar_cloud_ratio', 'wind_pressure_interact', 'pressure_temp_ratio',
             'conditions_clear', 'conditions_partially_cloudy', 'conditions_rain__overcast', 'conditions_rain__partially_cloudy', 'icon_clear-day', 'icon_partly-cloudy-day', 'icon_rain' ]
 
@@ -252,6 +252,7 @@ def feature_engineer(X, y = None):
         'temp', 'dew', 'humidity', 'temp_range', 'sealevelpressure', 
         'humidity', 'solarradiation', 'daylight_hours'
     ]
+    current_cols = current_cols + ['temp_range', 'pressure_temp_ratio', 'temp_change', 'daylight_hours', 'solar_intensity', 'effective_daylight', 'daylight_change', 'wind_dir_effect', 'temp_humidity_interact', 'effective_solar', 'solar_cloud_ratio', 'wind_pressure_interact', 'rain_streak', 'cloud_trend']
 
     for slag in [1,2,3]:
         for col in cols:
@@ -268,8 +269,6 @@ def feature_engineer(X, y = None):
     df['temp_momentum_1d'] = df['temp_lag_1'] - df['temp_lag_2']
     df['temp_momentum_3d'] = df['temp_lag_1'] - df['temp_lag_4']
     df['pressure_trend_3d'] = df['sealevelpressure_lag_1'] - df['sealevelpressure_lag_4']
-    current_cols = current_cols + ['temp-range', 'pressure_temp_ratio', 'temp_change', 'daylight_hours', 'solar_intensity', 'effective_daylight', 'daylight_change', 'wind_dir_effect', ' temp_humidity_interact', 'effective_solar', 'solar_cloud_ratio', 'wind_pressure_interact']
-
     df = df.drop(current_cols, axis=1, errors='ignore')
     df = df.dropna(axis=0)
     
@@ -280,16 +279,17 @@ def feature_engineer(X, y = None):
     else:
         return df
 
+
 ### Optuna & ONNX
 def objective(trial, X_train_val, y_train_val, task_logger=None):
     """
     Objective function for Optuna optimization
     """
     params = {
-        'n_estimators': trial.suggest_int('n_estimators', 50, 200),
-        'max_depth': trial.suggest_int('max_depth', 5, 15),
+        'n_estimators': trial.suggest_int('n_estimators', 50, 500),
+        'max_depth': trial.suggest_int('max_depth', 5, 10),
         'min_samples_split': trial.suggest_int('min_samples_split', 5, 20),
-        'min_samples_leaf': trial.suggest_int('min_samples_leaf', 2, 10),
+        'min_samples_leaf': trial.suggest_int('min_samples_leaf', 4, 9),
         'max_features': trial.suggest_categorical('max_features', ['sqrt', 'log2', 0.6, 0.7, 0.8]),
         'bootstrap': True,
         'random_state': 42,
@@ -369,12 +369,6 @@ def objective(trial, X_train_val, y_train_val, task_logger=None):
     print(f"      Avg Train R² = {mean_train_r2:.4f} | Avg Val R² = {mean_val_r2:.4f}")  # THÊM
     print(f"      Avg Overfit Ratio = {mean_overfit_ratio:.2f}x | Avg R² Gap = {mean_r2_gap:.4f}")  # THÊM
     
-    if mean_overfit_ratio > 1.5 or mean_r2_gap > 0.15:  # THÊM: Check R² gap
-        print(f"      HIGH OVERFITTING DETECTED!")
-    elif mean_overfit_ratio > 1.2 or mean_r2_gap > 0.08:
-        print(f"      Moderate overfitting")
-    else:
-        print(f"     Good generalization")
     
     # Log mean trial metrics to ClearML
     if task_logger:
@@ -573,8 +567,8 @@ def main():
     
     # Pipeline 1: Correlation reduction + Preprocessing
     pipe1 = Pipeline([
-        ("reduce_corr", SmartCorrelationReducer(target_col='temp')),
-        ("preprocess", Preprocessing(datetime_col='datetime'))
+        # ("reduce_corr", SmartCorrelationReducer(target_col='temp')),
+        ("preprocess", Preprocessing())
     ])
     
     print(f"\n🔧 Pipeline 1 - Correlation reduction + Preprocessing")
@@ -584,8 +578,8 @@ def main():
     
     # Feature engineering
     print(f"\n🎯 Feature Engineering")
-    X_train_fe, y_train_fe = feature_engineer_X(X_train_processed, y_train)
-    X_test_fe, y_test_fe = feature_engineer_X(X_test_processed, y_test)
+    X_train_fe, y_train_fe = feature_engineer(X_train_processed, y_train)
+    X_test_fe, y_test_fe = feature_engineer(X_test_processed, y_test)
     print(f"X_train_processed: {X_train_processed.shape}")
     print(f"X_test_processed: {X_test_processed.shape}")
     print(f"Columns kept: {list(X_train_processed.columns)}")
@@ -631,7 +625,7 @@ def main():
     print(f"{'='*60}")
     
     # Hyperparameter tuning với training data only
-    tuning_results = hyperparameter_tuning(X_train_final, y_train_fe, n_trials=20, task_logger=task_logger)
+    tuning_results = hyperparameter_tuning(X_train_final, y_train_fe, n_trials=30, task_logger=task_logger)
     
     # 🎯 PHASE 2: FINAL EVALUATION (First time touching test set)
     print(f"\n{'='*60}")
