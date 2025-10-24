@@ -252,7 +252,7 @@ def feature_engineer(X, y = None):
         'temp', 'dew', 'humidity', 'temp_range', 'sealevelpressure', 
         'humidity', 'solarradiation', 'daylight_hours'
     ]
-    current_cols = current_cols + ['temp_range', 'pressure_temp_ratio', 'temp_change', 'daylight_hours', 'solar_intensity', 'effective_daylight', 'daylight_change', 'wind_dir_effect', 'temp_humidity_interact', 'effective_solar', 'solar_cloud_ratio', 'wind_pressure_interact', 'rain_streak', 'cloud_trend']
+    current_cols = current_cols + ['temp_range', 'pressure_temp_ratio', 'temp_change', 'daylight_hours', 'solar_intensity', 'effective_daylight', 'daylight_change', 'wind_dir_effect', 'temp_humidity_interact', 'effective_solar', 'solar_cloud_ratio', 'wind_pressure_interact',  'cloud_trend']
 
     for slag in [1,2,3]:
         for col in cols:
