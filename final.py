@@ -1,24 +1,39 @@
-import numpy as np
 import pandas as pd
+import numpy as np
+import seaborn as sns
 import matplotlib.pyplot as plt
+import math
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', 1000)
+pd.set_option('display.max_rows', None)
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import Pipeline
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import TimeSeriesSplit
+from xgboost import XGBRegressor
+import lightgbm as lgb
 import optuna
-from sklearn.feature_selection import VarianceThreshold
-from skl2onnx import convert_sklearn
-from skl2onnx.common.data_types import FloatTensorType
-import onnxruntime as rt
-# For in-memory handling (do k dung local file)
-import io
-# For ClearML
-from clearml import Task
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import warnings
+warnings.filterwarnings('ignore')
+from clearml import Task, Logger
 
-GLOBAL_SEED = 42
+
+import random
+import os
+
+def set_seed(seed=42):
+    """Set global random seed for full reproducibility."""
+    np.random.seed(seed)
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    # LightGBM và Optuna sẽ dùng seed từ tham số random_state/seed
+    print(f"🔒 Random seed set to {seed}")
 
 def get_data(path):
     """Get data from downloaded datasets"""
@@ -32,69 +47,20 @@ def basic_cleaning(data):
     data['sunset'] = pd.to_datetime(data['sunset'])
     data.drop('description', axis=1, inplace=True, errors='ignore')
     return data
+def split_data(data):
+    n = len(data)
+    n_train = int(n * 0.85)
+    train_data = data.iloc[:n_train]
+    test_data = data.iloc[n_train:]
 
-class SmartCorrelationReducer(BaseEstimator, TransformerMixin):
-    def __init__(self, target_col='temp', threshold=0.6):
-        self.target_col = target_col
-        self.threshold = threshold
-        self.cols_to_keep_ = None
-        self.non_numeric_cols_ = None
+    X_train = train_data.drop(['temp'], axis=1)
+    y_train = train_data['temp']
+    X_test = test_data.drop(['temp'], axis=1)
+    y_test = test_data['temp']
 
-    def fit(self, X, y):
-        df = X.copy()
-        # ĐẢM BẢO index consistency
-        df[self.target_col] = y.values if hasattr(y, 'values') else y
+    return X_train, y_train, X_test, y_test
 
-        # Store non-numeric columns (datetime, etc.)
-        self.non_numeric_cols_ = df.select_dtypes(exclude="number").columns.tolist()
-        
-        # Get numeric columns excluding target
-        num_cols = df.select_dtypes(include="number").columns.drop(self.target_col, errors='ignore')
-        
-        if len(num_cols) == 0:
-            self.cols_to_keep_ = []
-            return self
-            
-        corr_matrix = df[num_cols].corr().abs()
-
-        upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-
-        to_drop = set()
-        for col in upper.columns:
-            if col not in to_drop:
-                high_corr = upper.index[upper[col] > self.threshold].tolist()
-                for hc in high_corr:
-                    if hc not in to_drop:
-                        corr_col = abs(df[col].corr(df[self.target_col]))
-                        corr_hc = abs(df[hc].corr(df[self.target_col]))
-                        # Handle NaN values
-                        if np.isnan(corr_col) and np.isnan(corr_hc):
-                            to_drop.add(hc)
-                        elif np.isnan(corr_col):
-                            to_drop.add(col)
-                            break
-                        elif np.isnan(corr_hc):
-                            to_drop.add(hc)
-                        elif corr_col >= corr_hc:
-                            to_drop.add(hc)
-                        else:
-                            to_drop.add(col)
-                            break
-
-        self.cols_to_keep_ = [c for c in num_cols if c not in to_drop]
-        return self
-
-    def transform(self, X):
-        if self.cols_to_keep_ is None:
-            return X
-            
-        # Keep numeric columns + ALL non-numeric columns (including datetime)
-        keep_cols = self.cols_to_keep_ + [col for col in self.non_numeric_cols_ if col in X.columns]
-        keep_cols = [col for col in keep_cols if col in X.columns]
-        
-        return X[keep_cols]
-
-class Preprocessing(BaseEstimator, TransformerMixin):
+class Preprocessor(BaseEstimator, TransformerMixin):
     def __init__(self, threshold=50, var_threshold=0.0):
         self.threshold = threshold               
         self.var_threshold = var_threshold       
@@ -118,6 +84,8 @@ class Preprocessing(BaseEstimator, TransformerMixin):
         percentage_missing = temp_df.isnull().sum() * 100 / len(temp_df)
         self.missing_cols_to_drop_ = percentage_missing[percentage_missing > self.threshold].index.tolist()
 
+
+
         # Keep cols
         self.numeric_cols_to_keep_ = [
             col for col in self.numeric_cols_ if col not in self.missing_cols_to_drop_
@@ -135,6 +103,10 @@ class Preprocessing(BaseEstimator, TransformerMixin):
                 self.numeric_cols_to_keep_[i] for i, keep in enumerate(selector.get_support()) if keep
             ]
 
+        # Compute quantiles from train set
+        self.quantiles = {}
+        for col in self.numeric_cols_to_keep_:
+            self.quantiles[col] = (df[col].quantile(0.05), df[col].quantile(0.95)) 
         # Fit OneHotEncoder cho categorical
         if len(self.categorical_cols_to_keep_) > 0:
             self.ohe_ = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
@@ -163,7 +135,9 @@ class Preprocessing(BaseEstimator, TransformerMixin):
         for col in self.numeric_cols_to_keep_:
             if col in temp_df.columns:
                 temp_df[col] = temp_df[col].interpolate(method='linear').ffill().bfill()
-
+                # clip data by quantile
+                low, high = self.quantiles[col]
+                df[col] = df[col].clip(lower=low, upper=high)
         # Encode categorical data
         if self.ohe_ is not None and len(self.categorical_cols_to_keep_) > 0:
             available_cat_cols = [col for col in self.categorical_cols_to_keep_ if col in temp_df.columns]
@@ -187,531 +161,723 @@ class Preprocessing(BaseEstimator, TransformerMixin):
             clean = temp_df
 
         return clean
-
-def feature_engineer(X, y = None):
-
+def feature_engineer(X, y):
     df = X.copy()
-    if y is not None:
-        df = df.reset_index(drop=True)
-        y = y.reset_index(drop=True) if hasattr(y, 'reset_index') else y
-        df['temp'] = y.values
+    df['temp'] = y.values
 
     # drop unnecessary and dubious columns
-    # drop feelslike because feelslike is computed by expected temp, humidity, winspeed => it use current data, similar and high correlated with temperature
-    # drop windspeed max/min/, windgust because winspeed => max windspeed over 1 hour and windgust => windspeed over 20 seconds => similar => keep windspeedmean
-    # drop precipcover because it is computed based on precip => unnecessary 
-    df = df.drop(['feelslike', 'feelslikemax', 'feelslikemin', 'windspeedmax', 'windspeedmin', 'winspeed', 'windgust', 'precipcover', 'solarenergy', 'moonphase', 'visibility'], axis = 1, errors = 'ignore')
-    current_cols = [i for i in df.columns.tolist() if i != 'temp']
+    df = df.drop([ 'feelslikemax', 'feelslikemin', 'windspeedmax', 'windspeedmin', 'winspeed', 'precipcover,' 'solarenergy' 'moonphase', 'visibility'], axis = 1, errors = 'ignore')
 
     df = df.sort_values('datetime')
 
     # Create new feature follow group
-
     df['month'] = df['datetime'].dt.month
     df['dayofweek'] = df['datetime'].dt.dayofweek
-    df['is_weekend'] = df['dayofweek'].isin([5, 6]).astype(int)
+    # df['is_weekend'] = df['dayofweek'].isin([5, 6]).astype(int)
+    df['day_of_year'] = df['datetime'].dt.dayofyear
+
     # temperature range
     df['temp_range'] = df['tempmax'] - df['tempmin']
-    df['pressure_temp_ratio'] = df['sealevelpressure'] / (df['temp'] + 10)
-    df['temp_change'] = df['temp'] - df['temp'].shift(1)
+
     # Day light, solar
     df['daylight_hours'] = df['daylight_hours'] = (df['sunset'] - df['sunrise']).dt.total_seconds() / 3600
-    df['solar_intensity'] = df['solarradiation'] / (df['daylight_hours']+0.1)
-    df['effective_daylight'] = df['daylight_hours'] * (1 - df['cloudcover']/100)
-    df['daylight_change'] = df['daylight_hours'] - df['daylight_hours'].shift(1)
 
-
-    # Wind and pressure
-    df['wind_dir_effect'] = np.sin(2 * np.pi * df['winddir'] / 360)
     
     # Rain and cloud
-    df['rain_streak'] = (df['precip'] > 0).astype(int).shift(1).rolling(3).sum()  
-    df['precip_7d_cumsum'] = df['precip'].shift(1).rolling(7).sum()
-    df['has_rain_recently'] = (df['precip'].shift(1).rolling(3).sum() > 0).astype(int)
-    df['cloud_trend'] = df['cloudcover'] - df['cloudcover'].shift(1)
-    df['recent_rain_intensity'] = df['precip'].shift(1).rolling(5).mean()
+    # df['rain_streak'] = (df['precip'] > 0).astype(int).shift(1).rolling(3).sum()  
+    # df['has_rain_recently'] = (df['precip'].shift(1).rolling(3).sum() > 0).astype(int)
+    # df['cloud_trend'] = df['cloudcover'] - df['cloudcover'].shift(1)
+    # df['recent_rain_intensity'] = df['precip'].shift(1).rolling(5).mean()
     #interaction
-    df['temp_humidity_interact'] = df['temp'] * df['humidity']
-    df['effective_solar'] = df['solarradiation'] / (df['cloudcover'] + 1)
-    df['solar_cloud_ratio'] = df['solarradiation'] / (df['cloudcover'] + 0.1)
-    df['wind_pressure_interact'] = df['windspeedmean'] * df['sealevelpressure']
-    # df['pressure_temp_ratio'] = df['sealevelpressure'] / (df['temp'] + 10)
+    df['temp_humidity_interact'] = df['temp_range'] * df['humidity']
     #seasonal
     df['month_sin'] = np.sin(2 * np.pi * df['datetime'].dt.month / 12)
     df['month_cos'] = np.cos(2 * np.pi * df['datetime'].dt.month / 12)
-    df['dayofweek_sin'] = np.sin(2 * np.pi * df['dayofweek'] / 7)
-    df['dayofweek_cos'] = np.cos(2 * np.pi * df['dayofweek'] / 7)
+    df['dayofyear_sin'] = np.sin(2 * np.pi * df['day_of_year'] / 365)
+    df['dayofyear_cos'] = np.cos(2 * np.pi * df['day_of_year'] / 365)
+    # df['dayofweek_sin'] = np.sin(2 * np.pi * df['dayofweek'] / 7)
+    # df['dayofweek_cos'] = np.cos(2 * np.pi * df['dayofweek'] / 7)
 
-    cols = ['temp', 'dew', 'humidity', 'precip', 'precipprob', 'windspeedmean', 'winddir', 'sealevelpressure', 'cloudcover', 'solarradiation', 'uvindex', 
-            'temp_range', 'temp_change', 'daylight_hours', 'solar_intensity', 'effective_daylight', 'daylight_change', 'wind_dir_effect',  
-            'cloud_trend', 'temp_humidity_interact', 'effective_solar', 'solar_cloud_ratio', 'wind_pressure_interact', 'pressure_temp_ratio',
-            'conditions_clear', 'conditions_partially_cloudy', 'conditions_rain__overcast', 'conditions_rain__partially_cloudy', 'icon_clear-day', 'icon_partly-cloudy-day', 'icon_rain' ]
+    cols = ['temp', 'feelslike', 'tempmin', 'tempmax', 'dew', 'humidity',  'sealevelpressure', 'solarradiation', 'uvindex', 
+            'temp_range', 'conditions_clear', 'conditions_partially_cloudy', 'conditions_rain__overcast', 'conditions_rain__partially_cloudy', 'icon_clear-day', 'icon_partly-cloudy-day', 'icon_rain' ]
 
     medium_term_features = [
-        'temp', 'dew', 'humidity', 'temp_range', 'sealevelpressure', 
+        'temp', 'dew', 'humidity',  'sealevelpressure', 
         'humidity', 'solarradiation', 'daylight_hours'
     ]
-    current_cols = current_cols + ['temp_range', 'pressure_temp_ratio', 'temp_change', 'daylight_hours', 'solar_intensity', 'effective_daylight', 'daylight_change', 'wind_dir_effect', 'temp_humidity_interact', 'effective_solar', 'solar_cloud_ratio', 'wind_pressure_interact',  'cloud_trend']
+
 
     for slag in [1,2,3]:
         for col in cols:
             df[f'{col}_lag_{slag}'] = df[col].shift(slag)
-    for col in ['temp', 'sealevelpressure']:  
-        if col in df.columns:
-            df[f'{col}_lag_4'] = df[col].shift(4)
+    # for col in ['temp']:  
+    #     if col in df.columns:
+    #         for i in [365, 366, 367]:
+    #             df[f'{col}_lag_{i}'] = df[col].shift(i)
     for llag in [5,7]:
         for col in medium_term_features:
             df[f'{col}_lag_{llag}'] = df[col].shift(llag)
-    for w in [ 7, 14]:
+    for w in [ 3,5, 7]:
         for col in cols:
-            df[f'{col}_rolling_{w}'] = df[col].shift(1).rolling(w).mean()
-    df['temp_momentum_1d'] = df['temp_lag_1'] - df['temp_lag_2']
-    df['temp_momentum_3d'] = df['temp_lag_1'] - df['temp_lag_4']
-    df['pressure_trend_3d'] = df['sealevelpressure_lag_1'] - df['sealevelpressure_lag_4']
-    df = df.drop(current_cols, axis=1, errors='ignore')
+            df[f'{col}_rolling_mean_{w}'] = df[col].rolling(w).mean()
+            df[f'{col}_rolling_std_{w}'] = df[col].rolling(w).std()
+    # df['temp_rolling_mean_60'] = df['temp'].rolling(60).mean()
+    # df['temp_rolling_std_60'] = df['temp'].rolling(60).std()
+    # df['temp_momentum_1d'] = df['temp_lag_1'] - df['temp_lag_2']
+    # df['temp_momentum_4d'] = df['temp_lag_1'] - df['temp_lag_5']
+    # df["pressure_temp_ratio_lag_1"] = df["sealevelpressure_lag_1"] / df["temp_lag_1"]
+    # df['temp_trend_7_30'] = df['temp_rolling_mean_7'] - df['temp_rolling_mean_30']
+    df['temp_humidity_interact'] = df['temp_range'] * df['humidity']
+    df['effective_solar'] = df['solarradiation'] / (df['cloudcover'] + 1)
+    df['dew_wind_interact'] = df['dew'] * df['windspeedmean']
+    df = df.drop(['datetime', 'sunset', 'sunrise']  , axis=1, errors='ignore')
     df = df.dropna(axis=0)
     
-    if y is not None:
-        X = df.drop('temp', axis = 1)
-        y = df['temp']
-        return X, y
-    else:
-        return df
+
+    y = pd.DataFrame()
+    for h in range(1, 6):
+        y[f'temp_t+{h}'] = df['temp'].shift(-h)
+    valid_idx = y.dropna().index
+    # X= df.drop('temp', axis = 1)
+    X = df.loc[valid_idx].reset_index(drop=True)
+    y = y.loc[valid_idx].reset_index(drop=True)
+    return X, y
 
 
-### Optuna & ONNX
-def objective(trial, X_train_val, y_train_val, task_logger=None):
-    """
-    Objective function for Optuna optimization
-    """
-    params = {
-        'n_estimators': trial.suggest_int('n_estimators', 50, 500),
-        'max_depth': trial.suggest_int('max_depth', 5, 10),
-        'min_samples_split': trial.suggest_int('min_samples_split', 5, 20),
-        'min_samples_leaf': trial.suggest_int('min_samples_leaf', 4, 9),
-        'max_features': trial.suggest_categorical('max_features', ['sqrt', 'log2', 0.6, 0.7, 0.8]),
-        'bootstrap': True,
-        'random_state': 42,
-        'n_jobs': -1
-    }
-    
-    # Log trial params to ClearML if available
-    if task_logger:
-        task_logger.report_single_value('trial_n_estimators', params['n_estimators'])
-        task_logger.report_single_value('trial_max_depth', params['max_depth'])
-        task_logger.report_single_value('trial_min_samples_split', params['min_samples_split'])
-        task_logger.report_single_value('trial_min_samples_leaf', params['min_samples_leaf'])
-        task_logger.report_text('trial_max_features', str(params['max_features']))
-    
-    model = RandomForestRegressor(**params)
-    
-    # Time Series Cross Validation
-    tscv = TimeSeriesSplit(n_splits=5)
-    
-    train_rmses = []
-    val_rmses = []
-    train_r2_scores = []  # THÊM: Store R² scores
-    val_r2_scores = []    # THÊM: Store R² scores
-    
-    print(f"\n Trial {trial.number} - Checking Overfitting (Train vs Validation):")
-    for fold, (train_idx, val_idx) in enumerate(tscv.split(X_train_val)):
-        if len(val_idx) == 0:
-            continue
-            
-        X_tr, X_vl = X_train_val.iloc[train_idx], X_train_val.iloc[val_idx]
-        y_tr, y_vl = y_train_val.iloc[train_idx], y_train_val.iloc[val_idx]
-        
-        if len(X_vl) < 10 or len(X_tr) < 50:
-            continue
-            
-        model.fit(X_tr, y_tr)
-        
-        # Train predictions
-        y_pred_train = model.predict(X_tr)
-        train_rmse = np.sqrt(mean_squared_error(y_tr, y_pred_train))
-        train_r2 = r2_score(y_tr, y_pred_train)  # THÊM: R² score
-        
-        # Validation predictions
-        y_pred_val = model.predict(X_vl)
-        val_rmse = np.sqrt(mean_squared_error(y_vl, y_pred_val))
-        val_r2 = r2_score(y_vl, y_pred_val)  # THÊM: R² score
-        
-        train_rmses.append(train_rmse)
-        val_rmses.append(val_rmse)
-        train_r2_scores.append(train_r2)  # THÊM
-        val_r2_scores.append(val_r2)      # THÊM
-
-        # Calculate overfitting ratio for this fold
-        overfit_ratio = val_rmse / train_rmse if train_rmse > 0 else float('inf')
-        r2_gap = train_r2 - val_r2  # THÊM: R² gap
-        
-        print(f"   Fold {fold+1}: Train RMSE = {train_rmse:.4f} | Val RMSE = {val_rmse:.4f} | Overfit Ratio = {overfit_ratio:.2f}x")
-        print(f"   Fold {fold+1}: Train R² = {train_r2:.4f} | Val R² = {val_r2:.4f} | R² Gap = {r2_gap:.4f}")  # THÊM
-        
-        # Log fold metrics to ClearML if available
-        if task_logger:
-            task_logger.report_scalar(title='Fold Performance', series=f'Train_Fold_{fold}', value=train_rmse, iteration=trial.number)
-            task_logger.report_scalar(title='Fold Performance', series=f'Val_Fold_{fold}', value=val_rmse, iteration=trial.number)
-            task_logger.report_scalar(title='R2 Scores', series=f'Train_Fold_{fold}', value=train_r2, iteration=trial.number)  # THÊM
-            task_logger.report_scalar(title='R2 Scores', series=f'Val_Fold_{fold}', value=val_r2, iteration=trial.number)      # THÊM
-            task_logger.report_scalar(title='Overfitting Ratio', series=f'Fold_{fold}', value=overfit_ratio, iteration=trial.number)
-    
-    mean_train_rmse = np.mean(train_rmses) if train_rmses else float('inf')
-    mean_val_rmse = np.mean(val_rmses) if val_rmses else float('inf')
-    mean_train_r2 = np.mean(train_r2_scores) if train_r2_scores else -float('inf')  # THÊM
-    mean_val_r2 = np.mean(val_r2_scores) if val_r2_scores else -float('inf')        # THÊM
-    mean_overfit_ratio = mean_val_rmse / mean_train_rmse if mean_train_rmse > 0 else float('inf')
-    mean_r2_gap = mean_train_r2 - mean_val_r2  # THÊM
-    
-    print(f"Trial {trial.number} Summary:")
-    print(f"      Avg Train RMSE = {mean_train_rmse:.4f} | Avg Val RMSE = {mean_val_rmse:.4f}")
-    print(f"      Avg Train R² = {mean_train_r2:.4f} | Avg Val R² = {mean_val_r2:.4f}")  # THÊM
-    print(f"      Avg Overfit Ratio = {mean_overfit_ratio:.2f}x | Avg R² Gap = {mean_r2_gap:.4f}")  # THÊM
-    
-    
-    # Log mean trial metrics to ClearML
-    if task_logger:
-        task_logger.report_single_value('mean_trial_train_rmse', mean_train_rmse)
-        task_logger.report_single_value('mean_trial_val_rmse', mean_val_rmse)
-        task_logger.report_single_value('mean_trial_train_r2', mean_train_r2)  # THÊM
-        task_logger.report_single_value('mean_trial_val_r2', mean_val_r2)      # THÊM
-        task_logger.report_single_value('mean_trial_overfit_ratio', mean_overfit_ratio)
-        task_logger.report_single_value('mean_trial_r2_gap', mean_r2_gap)      # THÊM
-    
-    return mean_val_rmse  
-def export_to_onnx(model, X_sample, task=None):
-    """
-    Export model to ONNX format
-    """
-    print(f"\n EXPORTING MODEL TO ONNX...")
-    
-    # Define initial types for ONNX conversion
-    initial_type = [('float_input', FloatTensorType([None, X_sample.shape[1]]))]
-    
-    # Convert to ONNX
-    onnx_model = convert_sklearn(model, initial_types=initial_type)
-    
-    # Serialize to bytes for direct upload
-    onnx_bytes = onnx_model.SerializeToString()
-    
-    # Upload to ClearML if task available (as bytes)
-    if task:
-        task.upload_artifact('onnx_model', onnx_bytes)
-    
-    # Validate ONNX model (load from bytes)
-    print(f"VALIDATING ONNX MODEL...")
-    sess = rt.InferenceSession(onnx_bytes)
-    input_name = sess.get_inputs()[0].name
-    output_name = sess.get_outputs()[0].name
-    
-    # Test prediction with ONNX
-    sample_data = X_sample[:5].values.astype(np.float32)
-    onnx_pred = sess.run([output_name], {input_name: sample_data})[0]
-    
-    # Compare with original model
-    original_pred = model.predict(X_sample[:5])
-    
-    print(f" ONNX model validated successfully!")
-    print(f"   Sample predictions match: {np.allclose(onnx_pred, original_pred, rtol=1e-3)}")
-    
-    return sess
-def evaluate_model(model, X_test,  y_test, model_name="Model", task_logger=None):
-    """
-    Comprehensive model evaluation - FINAL TEST ON UNSEEN DATA
-    """
-    
-    # Test predictions
-    y_pred_test = model.predict(X_test)
-    test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
-    test_mape = mean_absolute_percentage_error(y_test, y_pred_test)
-    test_r2 = r2_score(y_test, y_pred_test)
-    
-
-    
-    print(f"\n {model_name.upper()} PERFORMANCE:")
 
 
-    # Log to ClearML if available
-    if task_logger:
+# ============================================================================
+# 1. CÁC HÀM TIỆN ÍCH CƠ BẢN
+# ============================================================================
 
-        task_logger.report_scalar(f'{model_name} Metrics', 'test_rmse', test_rmse, iteration=0)
-        task_logger.report_scalar(f'{model_name} Metrics', 'test_mape', test_mape, iteration=0)
-        task_logger.report_scalar(f'{model_name} Metrics', 'test_r2', test_r2, iteration=0)
-
-    
+def calculate_all_metrics(y_true, y_pred):
+    """Tính tất cả metrics quan trọng"""
     return {
-        'test_rmse': test_rmse,
-        'test_mape': test_mape,
-        'test_r2': test_r2
+        'mae': mean_absolute_error(y_true, y_pred),
+        'rmse': np.sqrt(mean_squared_error(y_true, y_pred)),
+        'r2': r2_score(y_true, y_pred),
+        'mse': mean_squared_error(y_true, y_pred)
     }
 
-def hyperparameter_tuning(X_train_final, y_train_fe, n_trials=20, task_logger=None):
-    """
-    Hyperparameter tuning với Optuna - CHỈ DÙNG TRAINING DATA
-    """
-    print(f"\n🎯 HYPERPARAMETER TUNING PHASE (Training data only)")
-    print(f" Number of trials: {n_trials}")
+def prepare_data(X, y):
+    """Chuẩn bị dữ liệu - sử dụng tất cả features số"""
+    X_prepared = X.select_dtypes(include=[np.number])
+    X_prepared = X_prepared.fillna(X_prepared.median())
     
-    # Lấy task object cho ONNX export
-    task = None
-    if task_logger and hasattr(task_logger, '_task'):
-        task = task_logger._task
+    # Align X and y
+    common_idx = X_prepared.index.intersection(y.dropna().index)
+    X_final = X_prepared.loc[common_idx]
+    y_final = y.loc[common_idx]
     
-    # STEP 1: Baseline model validation performance
-    print(f"\n📊 STEP 1: BASELINE MODEL VALIDATION")
-    default_model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+    return X_final, y_final
+
+def train_final_lgb_model_all_features(X_train, y_train, best_params):
+    """Train final LightGBM model trên toàn bộ training data với tất cả features"""
     
-    # Đánh giá baseline bằng Cross-Validation (không dùng test set)
-    tscv = TimeSeriesSplit(n_splits=5)
-    baseline_val_scores = []
+    # Prepare data - sử dụng tất cả features
+    X_train_final, y_train_final = prepare_data(X_train, y_train)
     
-    for fold, (train_idx, val_idx) in enumerate(tscv.split(X_train_final)):
-        X_tr, X_val = X_train_final.iloc[train_idx], X_train_final.iloc[val_idx]
-        y_tr, y_val = y_train_fe.iloc[train_idx], y_train_fe.iloc[val_idx]
-        
-        default_model.fit(X_tr, y_tr)
-        y_pred_val = default_model.predict(X_val)
-        val_rmse = np.sqrt(mean_squared_error(y_val, y_pred_val))
-        baseline_val_scores.append(val_rmse)
+    print(f"   Final training data: {len(X_train_final)} samples, {X_train_final.shape[1]} features")
     
-    mean_baseline_val_rmse = np.mean(baseline_val_scores)
-    print(f"   Baseline Model - Avg Validation RMSE: {mean_baseline_val_rmse:.4f}")
+    # Train LightGBM trên toàn bộ train data
+    lgb_model = lgb.LGBMRegressor(
+        n_estimators=best_params['n_estimators'],
+        learning_rate=best_params['learning_rate'],
+        max_depth=best_params['max_depth'],
+        num_leaves=best_params['num_leaves'],
+        min_child_samples=best_params['min_child_samples'],
+        subsample=best_params['subsample'],
+        colsample_bytree=best_params['colsample_bytree'],
+        reg_alpha=best_params['reg_alpha'],
+        reg_lambda=best_params['reg_lambda'],
+        random_state=42,
+        n_jobs=-1,
+        verbose=-1
+    )
     
-    # STEP 2: Optuna tuning
-    print(f"\n📊 STEP 2: OPTUNA HYPERPARAMETER TUNING")
-    study = optuna.create_study(direction='minimize')
-    study.optimize(lambda trial: objective(trial, X_train_final, y_train_fe, task_logger), n_trials=n_trials)
+    lgb_model.fit(X_train_final, y_train_final)
     
-    best_params = study.best_params
-    print(f" Best parameters: {best_params}")
-    print(f" Best Validation RMSE: {study.best_value:.4f}")
+    # Evaluate trên chính training data
+    y_pred_train = lgb_model.predict(X_train_final)
+    train_metrics = calculate_all_metrics(y_train_final, y_pred_train)
     
-    # STEP 3: Train final model với best parameters
-    print(f"\n📊 STEP 3: TRAINING FINAL MODEL")
-    tuned_model = RandomForestRegressor(**best_params)
-    tuned_model.fit(X_train_final, y_train_fe)
-    
-    # Feature importance analysis
-    feature_importance = pd.DataFrame({
-        'feature': X_train_final.columns,
-        'importance': tuned_model.feature_importances_
-    }).sort_values('importance', ascending=False)
-    
-    print(f"\n TOP 10 FEATURE IMPORTANCES:")
-    print(feature_importance.head(10).to_string(index=False))
-    
-    # Export to ONNX
-    onnx_session = export_to_onnx(tuned_model, X_train_final, task)
-    
-    # Log to ClearML
-    if task_logger:
-        task_logger.report_single_value('baseline_validation_rmse', mean_baseline_val_rmse)
-        task_logger.report_single_value('best_validation_rmse', study.best_value)
-        task_logger.report_table('Feature Importance', 'top_10', table_plot=feature_importance.head(10))
-    
-    print(f"\n✅ HYPERPARAMETER TUNING COMPLETED")
-    print(f"   Best validation RMSE: {study.best_value:.4f}")
-    print(f"   Baseline validation RMSE: {mean_baseline_val_rmse:.4f}")
-    print(f"   Improvement: {mean_baseline_val_rmse - study.best_value:+.4f}")
+    print(f"   Final model performance on training data:")
+    print(f"     RMSE: {train_metrics['rmse']:.4f}, MAE: {train_metrics['mae']:.4f}, R²: {train_metrics['r2']:.4f}")
     
     return {
-        'tuned_model': tuned_model,
+        'model': lgb_model,
+        'train_metrics': train_metrics,
+        'feature_names': list(X_train_final.columns),  # Tất cả features
         'best_params': best_params,
-        'feature_importance': feature_importance,
-        'study': study,
-        'onnx_session': onnx_session,
-        'baseline_val_rmse': mean_baseline_val_rmse,
-        'best_val_rmse': study.best_value
+        'n_features': X_train_final.shape[1]
     }
-def main():
-    # Initialize ClearML Task
-    task = Task.init(project_name='HCM_Temp_Forecast', task_name='RF_Tuning_with_ClearML')
-    task_logger = task.get_logger()
+
+# ============================================================================
+# 2. LIGHTGBM HYPERPARAMETER TUNING VỚI REGULARIZATION MẠNH
+# ============================================================================
+
+def objective_lgb_all_features(trial, X_train, y_train, target_name):
+    """Objective function cho Optuna với tất cả features"""
+    horizon = int(target_name.split('+')[-1])
+
+    params = {
+        'n_estimators': trial.suggest_int('n_estimators', 200, 1000),
+        'learning_rate': trial.suggest_float('learning_rate', 0.03, 0.1, log=True),
+        'max_depth': trial.suggest_int('max_depth', 3, 8),
+        'num_leaves': trial.suggest_int('num_leaves', 15, 80),
+        'min_child_samples': trial.suggest_int('min_child_samples', 30, 200),
+        'subsample': trial.suggest_float('subsample', 0.6, 0.9),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.9),
+        'reg_alpha': trial.suggest_float('reg_alpha', 0.1, 1.0),
+        'reg_lambda': trial.suggest_float('reg_lambda', 0.1, 1.0),
+        'min_split_gain': trial.suggest_float('min_split_gain', 0.0, 0.3),
+    }
+
+    # Horizon xa -> regularization mạnh hơn
+    if horizon == 1:
+        params['learning_rate'] *= 1.2
+        params['reg_alpha'] *= 0.8
+        params['reg_lambda'] *= 0.8
+    elif horizon == 2:
+        pass  # giữ nguyên
+    elif horizon == 3:
+        params['learning_rate'] *= 0.8
+        params['reg_alpha'] *= 1.2
+        params['reg_lambda'] *= 1.2
+    elif horizon >= 4:
+        params['learning_rate'] *= 0.6
+        params['reg_alpha'] *= 2.0
+        params['reg_lambda'] *= 2.0
+        params['min_child_samples'] = min(400, params['min_child_samples'] * 2)
+        params['num_leaves'] = max(20, params['num_leaves'] - 15)
+
+    params['n_estimators'] = int(params['n_estimators'] * (1 + 0.1 * horizon))
+
+    # Sử dụng tất cả features
+    X_final, y_final = prepare_data(X_train, y_train)
+
+    tscv = TimeSeriesSplit(n_splits=5)
+    all_metrics = {'mae': [], 'rmse': [], 'r2': [], 'mse': []}
+
+    for train_idx, val_idx in tscv.split(X_final):
+        X_tr, X_val = X_final.iloc[train_idx], X_final.iloc[val_idx]
+        y_tr, y_val = y_final.iloc[train_idx], y_final.iloc[val_idx]
+
+        model = lgb.LGBMRegressor(**params, random_state=42, n_jobs=-1)
+        model.fit(
+            X_tr, y_tr,
+            eval_set=[(X_val, y_val)],
+            eval_metric='rmse',
+            callbacks=[
+                lgb.early_stopping(50, verbose=False),
+                lgb.log_evaluation(0)
+            ]
+        )
+        y_pred = model.predict(X_val)
+        metrics = calculate_all_metrics(y_val, y_pred)
+        for k, v in metrics.items():
+            all_metrics[k].append(v)
+
+    mean_metrics = {k: np.mean(v) for k, v in all_metrics.items()}
+    trial.set_user_attr('metrics', mean_metrics)
+
+    # Penalize low R² models
+    score = mean_metrics['rmse'] * (1.0 + 0.3 * (1 - mean_metrics['r2']))
+    return score
+
+def optimize_lgb_all_features(X_train, y_train, target_name, n_trials=50):
+    """Optimize với tất cả features"""
+    print(f"🔍 Optimizing LightGBM with ALL FEATURES for {target_name}")
     
-    # Load data
+    # Sử dụng tất cả features
+    X_final, y_final = prepare_data(X_train, y_train)
+    print(f"   Using ALL {X_final.shape[1]} features")
+    
+    sampler = optuna.samplers.TPESampler(seed=42)
+    study = optuna.create_study(direction='minimize', sampler=sampler)
+
+    study.optimize(
+        lambda trial: objective_lgb_all_features(trial, X_train, y_train, target_name),
+        n_trials=n_trials,
+        show_progress_bar=True
+    )
+    
+    best_metrics = study.best_trial.user_attrs['metrics']
+    
+    print(f"✅ Best Results for {target_name} (ALL FEATURES):")
+    print(f"   RMSE: {best_metrics['rmse']:.4f}, R²: {best_metrics['r2']:.4f}")
+    print(f"   Best params: n_est={study.best_params['n_estimators']}, lr={study.best_params['learning_rate']:.4f}")
+    print(f"   Regularization: alpha={study.best_params['reg_alpha']:.2f}, lambda={study.best_params['reg_lambda']:.2f}")
+    
+    return study.best_params, best_metrics
+
+# ============================================================================
+# 3. COMPLETE PIPELINE VỚI TẤT CẢ FEATURES
+# ============================================================================
+
+def complete_lgb_pipeline_all_features(X_train, y_train, optimization_params=None):
+    """Pipeline sử dụng TẤT CẢ FEATURES cho từng target"""
+    
+    if optimization_params is None:
+        optimization_params = {'n_trials': 50}
+    
+    print("🎯 LIGHTGBM PIPELINE WITH ALL FEATURES")
+    print("=" * 70)
+    print("🔧 Mỗi target sử dụng TẤT CẢ FEATURES có sẵn")
+    print(f"📊 Training data: {X_train.shape}")
+    
+    # Sử dụng tất cả features số
+    X_numeric = X_train.select_dtypes(include=[np.number])
+    print(f"📈 Using ALL {X_numeric.shape[1]} numeric features for all targets")
+    
+    # STEP 1: Model Training với Tất Cả Features
+    print("\n🔧 STEP 1: Model Training with ALL Features")
+    models = {}
+    best_params_dict = {}
+    train_metrics_dict = {}
+    cv_metrics_dict = {}
+    
+    for col in y_train.columns:
+        print("\n" + "="*60)
+        print(f"🚀 Training with ALL features for: {col}")
+        print("="*60)
+        
+        # Optimize với tất cả features
+        best_params, cv_metrics = optimize_lgb_all_features(
+            X_train=X_train,
+            y_train=y_train[col],
+            target_name=col,
+            n_trials=optimization_params['n_trials']
+        )
+        
+        # Train final model
+        model_result = train_final_lgb_model_all_features(
+            X_train=X_train,
+            y_train=y_train[col],
+            best_params=best_params
+        )
+        
+        models[col] = model_result
+        best_params_dict[col] = best_params
+        train_metrics_dict[col] = model_result['train_metrics']
+        cv_metrics_dict[col] = cv_metrics
+        
+        # Kiểm tra overfitting
+        train_test_gap = model_result['train_metrics']['r2'] - cv_metrics['r2']
+        print(f"✅ {col}: Model trained with ALL {model_result['n_features']} features")
+        print(f"   Train R²: {model_result['train_metrics']['r2']:.4f}")
+        print(f"   Train-CV gap: {train_test_gap:.4f} {'⚠️' if train_test_gap > 0.3 else '✅'}")
+    
+    # STEP 2: Return pipeline
+    pipeline = {
+        "models": models,
+        "features": {col: model_info['feature_names'] for col, model_info in models.items()},
+        "best_params": best_params_dict,
+        "train_metrics": train_metrics_dict,
+        "cv_metrics": cv_metrics_dict,
+        "feature_selection_method": "ALL FEATURES",
+        "pipeline_type": "all_features"
+    }
+    
+    # STEP 3: Summary
+    print("\n🎯 ALL FEATURES PIPELINE SUMMARY")
+    print("=" * 100)
+    print(f"{'Target':<12} {'Features':<8} {'CV R²':<8} {'Train R²':<8} {'Gap':<8} {'n_est':<6} {'Reg Alpha':<10} {'Reg Lambda':<10}")
+    print("-" * 100)
+    
+    for col in y_train.columns:
+        if models[col] is not None:
+            cv_metrics = cv_metrics_dict[col]
+            train_metrics = train_metrics_dict[col]
+            best_params = best_params_dict[col]
+            gap = train_metrics['r2'] - cv_metrics['r2']
+            
+            print(f"{col:<12} {models[col]['n_features']:<8} "
+                f"{cv_metrics['r2']:<8.4f} {train_metrics['r2']:<8.4f} "
+                f"{gap:<8.4f} {best_params['n_estimators']:<6} "
+                f"{best_params['reg_alpha']:<10.2f} {best_params['reg_lambda']:<10.2f}")
+    
+    return pipeline
+
+# ============================================================================
+# 4. EVALUATE ON TEST SET
+# ============================================================================
+
+def evaluate_on_test_set_summary(pipeline, X_test, y_test):
+    """
+    Evaluate final models trên test set và in ra metrics trung bình.
+    Chỉ tập trung vào test set.
+    """
+    
+    print("\n" + "="*80)
+    print("🧪 FINAL EVALUATION ON TEST SET (SUMMARY)")
+    print("="*80)
+    
+    test_metrics_dict = {}
+    
+    # Duyệt qua tất cả targets
+    for col, model_info in pipeline["models"].items():
+        if model_info is None:
+            continue
+        
+        lgb_model = model_info['model']
+        
+        # Chuẩn bị test data với tất cả features
+        X_test_final, y_test_final = prepare_data(X_test, y_test[col])
+        
+        # Predict và tính metrics
+        y_pred_test = lgb_model.predict(X_test_final)
+        test_metrics = calculate_all_metrics(y_test_final, y_pred_test)
+        test_metrics_dict[col] = test_metrics
+        
+        print(f"{col:<12} RMSE: {test_metrics['rmse']:.4f} | MAE: {test_metrics['mae']:.4f} | R²: {test_metrics['r2']:.4f}")
+    
+    # Trung bình metrics cho tất cả target
+    avg_rmse = np.mean([m['rmse'] for m in test_metrics_dict.values()])
+    avg_mae = np.mean([m['mae'] for m in test_metrics_dict.values()])
+    avg_r2 = np.mean([m['r2'] for m in test_metrics_dict.values()])
+    
+    print("\n📊 Average metrics across all targets:")
+    print(f"   RMSE: {avg_rmse:.4f} | MAE: {avg_mae:.4f} | R²: {avg_r2:.4f}")
+    
+    return test_metrics_dict
+
+# ============================================================================
+# 5. COMPREHENSIVE FINAL EVALUATION - ALL DATASETS
+# ============================================================================
+
+def comprehensive_final_evaluation_with_avg(pipeline, X_train, y_train, X_test, y_test):
+    """Đánh giá toàn diện trên cả 3 tập: Train, Validation (CV), và Test,
+    đồng thời tính trung bình metrics trên tất cả target và tập dữ liệu."""
+    
+    print("\n" + "="*120)
+    print("📊 COMPREHENSIVE FINAL EVALUATION - ALL DATASETS")
+    print("="*120)
+    
+    final_results = {}
+    
+    # Lưu metrics để tính trung bình
+    metrics_accumulator = {'train': [], 'validation': [], 'test': []}
+    
+    for col, model_info in pipeline["models"].items():
+        if model_info is None:
+            continue
+            
+        lgb_model = model_info['model']
+        
+        print(f"\n🎯 {col} - Comprehensive Evaluation:")
+        print("-" * 80)
+        
+        # 1. TRAIN SET EVALUATION
+        X_train_final, y_train_final = prepare_data(X_train, y_train[col])
+        y_pred_train = lgb_model.predict(X_train_final)
+        train_metrics = calculate_all_metrics(y_train_final, y_pred_train)
+        
+        # 2. VALIDATION SET (CV metrics from pipeline)
+        cv_metrics = pipeline["cv_metrics"][col]
+        
+        # 3. TEST SET EVALUATION
+        X_test_final, y_test_final = prepare_data(X_test, y_test[col])
+        y_pred_test = lgb_model.predict(X_test_final)
+        test_metrics = calculate_all_metrics(y_test_final, y_pred_test)
+        
+        # Store results
+        final_results[col] = {
+            'train': train_metrics,
+            'validation': cv_metrics,
+            'test': test_metrics
+        }
+        
+        # Cộng metrics vào accumulator để tính trung bình sau
+        metrics_accumulator['train'].append(train_metrics)
+        metrics_accumulator['validation'].append(cv_metrics)
+        metrics_accumulator['test'].append(test_metrics)
+        
+        # Print detailed comparison
+        print(f"   {'Dataset':<12} {'R²':<8} {'RMSE':<10} {'MAE':<10}")
+        print(f"   {'-'*12} {'-'*8} {'-'*10} {'-'*10}")
+        print(f"   {'Train':<12} {train_metrics['r2']:<8.4f} {train_metrics['rmse']:<10.4f} {train_metrics['mae']:<10.4f}")
+        print(f"   {'Validation':<12} {cv_metrics['r2']:<8.4f} {cv_metrics['rmse']:<10.4f} {cv_metrics['mae']:<10.4f}")
+        print(f"   {'Test':<12} {test_metrics['r2']:<8.4f} {test_metrics['rmse']:<10.4f} {test_metrics['mae']:<10.4f}")
+        
+        # Generalization analysis
+        train_test_gap = train_metrics['r2'] - test_metrics['r2']
+        if train_test_gap > 0.3:
+            print(f"   ⚠️  High train-test gap: {train_test_gap:.3f} (potential overfitting)")
+        elif train_test_gap > 0.15:
+            print(f"   🔶 Moderate train-test gap: {train_test_gap:.3f}")
+        else:
+            print(f"   ✅ Good generalization: train-test gap = {train_test_gap:.3f}")
+    
+    # Tính trung bình metrics cho tất cả target và tập dữ liệu
+    def average_metrics(metrics_list):
+        avg = {}
+        for key in ['rmse', 'mae', 'r2', 'mse']:
+            avg[key] = np.mean([m[key] for m in metrics_list])
+        return avg
+    
+    avg_train = average_metrics(metrics_accumulator['train'])
+    avg_validation = average_metrics(metrics_accumulator['validation'])
+    avg_test = average_metrics(metrics_accumulator['test'])
+    
+    print("\n📊 Average metrics across all targets:")
+    print(f"{'Dataset':<12} {'R²':<8} {'RMSE':<10} {'MAE':<10}")
+    print(f"{'-'*12} {'-'*8} {'-'*10} {'-'*10}")
+    print(f"{'Train':<12} {avg_train['r2']:<8.4f} {avg_train['rmse']:<10.4f} {avg_train['mae']:<10.4f}")
+    print(f"{'Validation':<12} {avg_validation['r2']:<8.4f} {avg_validation['rmse']:<10.4f} {avg_validation['mae']:<10.4f}")
+    print(f"{'Test':<12} {avg_test['r2']:<8.4f} {avg_test['rmse']:<10.4f} {avg_test['mae']:<10.4f}")
+    
+    return final_results, {'train': avg_train, 'validation': avg_validation, 'test': avg_test}
+
+# ============================================================================
+# 6. VISUALIZATION
+# ============================================================================
+
+def plot_comprehensive_performance(final_results):
+    """Visualize comprehensive performance across all datasets"""
+    
+    targets = list(final_results.keys())
+    
+    # Prepare data
+    train_r2 = [final_results[t]['train']['r2'] for t in targets]
+    val_r2 = [final_results[t]['validation']['r2'] for t in targets]
+    test_r2 = [final_results[t]['test']['r2'] for t in targets]
+    
+    train_rmse = [final_results[t]['train']['rmse'] for t in targets]
+    val_rmse = [final_results[t]['validation']['rmse'] for t in targets]
+    test_rmse = [final_results[t]['test']['rmse'] for t in targets]
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # R² comparison
+    x = np.arange(len(targets))
+    width = 0.25
+    
+    ax1.bar(x - width, train_r2, width, label='Train R²', alpha=0.7, color='green')
+    ax1.bar(x, val_r2, width, label='Validation R²', alpha=0.7, color='blue')
+    ax1.bar(x + width, test_r2, width, label='Test R²', alpha=0.7, color='red')
+    
+    ax1.set_xlabel('Targets')
+    ax1.set_ylabel('R² Score')
+    ax1.set_title('R² Comparison: Train vs Validation vs Test (ALL FEATURES)')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(targets, rotation=45)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # RMSE comparison
+    ax2.bar(x - width, train_rmse, width, label='Train RMSE', alpha=0.7, color='green')
+    ax2.bar(x, val_rmse, width, label='Validation RMSE', alpha=0.7, color='blue')
+    ax2.bar(x + width, test_rmse, width, label='Test RMSE', alpha=0.7, color='red')
+    
+    ax2.set_xlabel('Targets')
+    ax2.set_ylabel('RMSE (°C)')
+    ax2.set_title('RMSE Comparison: Train vs Validation vs Test (ALL FEATURES)')
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(targets, rotation=45)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+
+# ============================================================================
+# 7. PREDICTION FUNCTIONS
+# ============================================================================
+
+def predict_single_target_lgb_all_features(lgb_model, X_new):
+    """Dự đoán cho một target với LightGBM sử dụng tất cả features"""
+    if lgb_model is None:
+        return None
+    
+    # Prepare data với tất cả features
+    X_prepared = X_new.select_dtypes(include=[np.number])
+    X_prepared = X_prepared.fillna(X_prepared.median())
+    
+    # Predict
+    predictions = lgb_model.predict(X_prepared)
+    
+    return predictions
+
+def predict_multi_step_lgb_all_features(pipeline, X_new):
+    """Dự đoán cho tất cả targets với LightGBM models sử dụng tất cả features"""
+    predictions = {}
+    
+    print("🔮 MAKING PREDICTIONS WITH LIGHTGBM (ALL FEATURES)")
+    print("=" * 60)
+    
+    for col, model_info in pipeline["models"].items():
+        if model_info is None:
+            predictions[col] = None
+            continue
+            
+        lgb_model = model_info['model']
+        pred = predict_single_target_lgb_all_features(lgb_model, X_new)
+        predictions[col] = pred
+        
+        if len(pred) == 1:
+            print(f"📅 {col}: {pred[0]:.2f}°C")
+        else:
+            print(f"📅 {col}: {[f'{p:.2f}°C' for p in pred]}")
+    
+    return predictions
+
+# ============================================================================
+# 8. OVERFITTING ANALYSIS
+# ============================================================================
+
+def analyze_overfitting(final_results):
+    """Phân tích overfitting và đề xuất cải tiến"""
+    print("\n🔍 OVERFITTING ANALYSIS & RECOMMENDATIONS")
+    print("=" * 80)
+    
+    for target, results in final_results.items():
+        train_r2 = results['train']['r2']
+        test_r2 = results['test']['r2']
+        gap = train_r2 - test_r2
+        
+        print(f"\n{target}:")
+        print(f"  Train R²: {train_r2:.4f}, Test R²: {test_r2:.4f}, Gap: {gap:.4f}")
+        
+        if gap > 0.4:
+            print(f"  🔴 SEVERE OVERFITTING - Need strong regularization")
+            print(f"  💡 Recommendations: Increase min_child_samples > 100, reg_alpha/lambda > 2.0")
+        elif gap > 0.25:
+            print(f"  🟡 MODERATE OVERFITTING - Need regularization")
+            print(f"  💡 Recommendations: Reduce num_leaves, increase reg_alpha/lambda")
+        elif gap > 0.15:
+            print(f"  🟢 MILD OVERFITTING - Acceptable")
+            print(f"  💡 Recommendations: Minor parameter adjustments")
+        else:
+            print(f"  ✅ GOOD GENERALIZATION - Well regularized")
+
+# ============================================================================
+# 9. MAIN EXECUTION FUNCTION
+# ============================================================================
+
+def main_all_features_pipeline(data):
+    """Main function sử dụng TẤT CẢ FEATURES cho từng target"""
+    
+    print("🚀 ALL FEATURES PIPELINE - MỖI TARGET SỬ DỤNG TẤT CẢ FEATURES")
+    print("=" * 80)
+    print(f"🔧 Configuration: ALL FEATURES for all targets")
+    print(f"📊 Train data: {train_x.shape}, Test data: {test_x.shape}")
+    # -------------------------
+    # Step 2: Basic Cleaning
+    # -------------------------
+    data = basic_cleaning(data)
+    print("🧹 Data cleaned successfully!")
+
+    # -------------------------
+    # Step 3: Split Data
+    # -------------------------
+    X_train, y_train, X_test, y_test = split_data(data)
+    print(f"📊 Train: {X_train.shape}, Test: {X_test.shape}")
+
+    # -------------------------
+    # Step 4: Preprocessing
+    # -------------------------
+    pre = Preprocessor()
+    pre.fit(X_train, y_train)
+    X_train = pre.transform(X_train)
+    X_test = pre.transform(X_test)
+    print("🔧 Preprocessing done!")
+
+    # -------------------------
+    # Step 5: Feature Engineering
+    # -------------------------
+    X_train, y_train = feature_engineer(X_train, y_train)
+    X_test, y_test = feature_engineer(X_test, y_test)
+    print("🧠 Feature engineering completed!")
+
+    # -------------------------
+    # Step 6: Training with ALL features
+    # -------------------------
+    print("\n🚀 TRAINING PIPELINE USING ALL FEATURES FOR EACH TARGET")
+    pipeline = complete_lgb_pipeline_all_features(
+        X_train=X_train,
+        y_train=y_train,
+        optimization_params={'n_trials': 30}
+    )
+
+    # -------------------------
+    # Step 7: Evaluation
+    # -------------------------
+    test_metrics_dict = evaluate_on_test_set_summary(pipeline, X_test, y_test)
+    final_results, avg_metrics = comprehensive_final_evaluation_with_avg(
+        pipeline, X_train, y_train, X_test, y_test
+    )
+
+    # Attach results back to pipeline
+    pipeline['test_metrics'] = avg_metrics['test']
+    pipeline['final_results'] = final_results
+
+    # -------------------------
+    # Step 8: Visualization & Analysis
+    # -------------------------
+    plot_comprehensive_performance(final_results)
+    analyze_overfitting(final_results)
+
+    # -------------------------
+    # Step 9: Export models to ONNX
+    # -------------------------
+    save_lgb_models_to_onnx(pipeline, save_dir="models_onnx/")
+
+    print("\n🎉 Pipeline completed successfully!")
+    return pipeline, final_results
+
+import onnxmltools
+from skl2onnx.common.data_types import FloatTensorType
+
+# ============================================================================
+# 10.onnx
+# ============================================================================
+def save_lgb_models_to_onnx(pipeline, save_dir="models_onnx/"):
+    """
+    Lưu 5 model LightGBM (temp_t+1 → temp_t+5) sang định dạng ONNX.
+    Mỗi model sẽ được lưu thành 1 file .onnx riêng.
+    """
+    import os
+    os.makedirs(save_dir, exist_ok=True)
+
+    for target_name, model_info in pipeline["models"].items():
+        model = model_info["model"]
+        feature_names = model_info["feature_names"]
+
+        # Input shape = (None, n_features)
+        initial_type = [('float_input', FloatTensorType([None, len(feature_names)]))]
+
+        print(f"💾 Converting {target_name} to ONNX format...")
+        onnx_model = onnxmltools.convert_lightgbm(model, initial_types=initial_type)
+        
+        file_path = os.path.join(save_dir, f"{target_name}.onnx")
+        with open(file_path, "wb") as f:
+            f.write(onnx_model.SerializeToString())
+
+        print(f"✅ Saved: {file_path}")
+
+    print("\n🎉 All 5 models saved to ONNX format successfully!")
+
+
+# ============================================================================
+# 11. EXECUTION
+# ============================================================================
+if __name__ == "__main__":
+    set_seed(42)
+    # task = Task.init(
+    #     project_name="Weather Forecast HCM",
+    #     task_name="LGBM All Features Pipeline",
+    #     task_type=Task.TaskTypes.training,
+    #     output_uri=True
+    # )
+    # logger = task.get_logger()
+
     path = "https://raw.githubusercontent.com/7hufofbun/DSEB--Machine-Learning_Group5/refs/heads/main/data/weather_hcm_daily.csv"
     data = get_data(path)
-    print(f"📥 Original data shape: {data.shape}")
-    
-    # Log data shape
-    task_logger.report_single_value('original_data_rows', data.shape[0])
-    task_logger.report_single_value('original_data_columns', data.shape[1])
-    
-    # Basic cleaning
-    data = basic_cleaning(data)
-    print(f"🧹 After basic cleaning: {data.shape}")
-    data = data.sort_values('datetime')
 
-    task_logger.report_single_value('cleaned_data_rows', data.shape[0])
-    task_logger.report_single_value('cleaned_data_columns', data.shape[1])
-    
-    # Split data
-    n = len(data)
-    n_train = int(n * 0.8)
-    train_data = data.iloc[:n_train]
-    test_data = data.iloc[n_train:]
-    
-    X_train = train_data.drop(['temp'], axis=1)
-    y_train = train_data['temp']
-    X_test = test_data.drop(['temp'], axis=1)
-    y_test = test_data['temp']
-    
-    print(f"\n📊 Data split:")
-    print(f"X_train: {X_train.shape}, y_train: {y_train.shape}")
-    print(f"X_test: {X_test.shape}, y_test: {y_test.shape}")
-    
-    # Log split sizes
-    task_logger.report_single_value('train_size', len(train_data))
-    task_logger.report_single_value('test_size', len(test_data))
-    
-    # Pipeline 1: Correlation reduction + Preprocessing
-    pipe1 = Pipeline([
-        # ("reduce_corr", SmartCorrelationReducer(target_col='temp')),
-        ("preprocess", Preprocessing())
-    ])
-    
-    print(f"\n🔧 Pipeline 1 - Correlation reduction + Preprocessing")
-    X_train_processed = pipe1.fit_transform(X_train, y_train)
-    X_test_processed = pipe1.transform(X_test)
-
-    
-    # Feature engineering
-    print(f"\n🎯 Feature Engineering")
-    X_train_fe, y_train_fe = feature_engineer(X_train_processed, y_train)
-    X_test_fe, y_test_fe = feature_engineer(X_test_processed, y_test)
-    print(f"X_train_processed: {X_train_processed.shape}")
-    print(f"X_test_processed: {X_test_processed.shape}")
-    print(f"Columns kept: {list(X_train_processed.columns)}")
-    print(f"X_train_fe: {X_train_fe.shape}, y_train_fe: {y_train_fe.shape}")
-    print(f"X_test_fe: {X_test_fe.shape}, y_test_fe: {y_test_fe.shape}")
-    
-    # Log FE shapes
-    task_logger.report_single_value('X_train_fe_columns', X_train_fe.shape[1])
-    task_logger.report_single_value('X_test_fe_columns', X_test_fe.shape[1])
-    
-    # Check for NaN values after feature engineering
-    print(f"\n✅ After handling NaN:")
-    print(f"X_train_fe NaN: {X_train_fe.isnull().sum().sum()}")
-    print(f"X_test_fe NaN: {X_test_fe.isnull().sum().sum()}")
-    
-    # Prepare final data for modeling (exclude non-numeric columns)
-    print(f"\n🎯 Preparing data for modeling")
-    X_train_final = X_train_fe.select_dtypes(include=[np.number])
-    X_test_final = X_test_fe.select_dtypes(include=[np.number])
-    
-    # 🔧 FIX: Reset index to avoid index alignment issues
-    X_train_final = X_train_final.reset_index(drop=True)
-    y_train_fe = y_train_fe.reset_index(drop=True)
-    X_test_final = X_test_final.reset_index(drop=True) 
-    y_test_fe = y_test_fe.reset_index(drop=True)
-    
-    print(f"X_train_final: {X_train_final.shape}")
-    print(f"X_test_final: {X_test_final.shape}")
-    
-    # 🔧 FIX: Ensure feature names are consistent
-    print(f"Training features: {list(X_train_final.columns)}")
-    print(f"Test features: {list(X_test_final.columns)}")
-    
-    # Upload data directly to ClearML (no local files)
-    task.upload_artifact('X_train_final', X_train_final)
-    task.upload_artifact('X_test_final', X_test_final)
-    task.upload_artifact('y_train', pd.DataFrame(y_train_fe))
-    task.upload_artifact('y_test', pd.DataFrame(y_test_fe))
-    
-    # 🎯 PHASE 1: HYPERPARAMETER TUNING (Training data only)
-    print(f"\n{'='*60}")
-    print(f"🎯 PHASE 1: HYPERPARAMETER TUNING")
-    print(f"{'='*60}")
-    
-    # Hyperparameter tuning với training data only
-    tuning_results = hyperparameter_tuning(X_train_final, y_train_fe, n_trials=30, task_logger=task_logger)
-    
-    # 🎯 PHASE 2: FINAL EVALUATION (First time touching test set)
-    print(f"\n{'='*60}")
-    print(f"🎯 PHASE 2: FINAL EVALUATION")
-    print(f"{'='*60}")
-    
-    # Evaluate tuned model on test set
-    print(f"\n📊 FINAL TUNED MODEL EVALUATION:")
-    
-    # 🔧 FIX: Ensure we're passing DataFrame, not Series
-    if isinstance(X_test_final, pd.Series):
-        X_test_final = X_test_final.to_frame().T
-    if isinstance(y_test_fe, pd.Series):
-        y_test_fe_values = y_test_fe.values
-    else:
-        y_test_fe_values = y_test_fe
-    
-    tuned_results = evaluate_model(
-        tuning_results['tuned_model'], 
-        X_test_final, 
-        y_test_fe_values, 
-        "Final Tuned Model", 
-        task_logger
+    # ✅ Sử dụng pipeline với feature selection độc lập
+    pipeline, final_results = main_all_features_pipeline(
+        data
     )
-    
-    # Train and evaluate baseline model for comparison
-    print(f"\n📊 BASELINE MODEL EVALUATION:")
-    baseline_model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
-    baseline_model.fit(X_train_final, y_train_fe)
-    
-    baseline_results = evaluate_model(
-        baseline_model,
-        X_test_final,
-        y_test_fe_values,
-        "Baseline Model",
-        task_logger
-    )
-    
-    # Compare improvements
-    improvement_r2 = tuned_results['test_r2'] - baseline_results['test_r2']
-    improvement_rmse = baseline_results['test_rmse'] - tuned_results['test_rmse']
-    
-    print(f"\n🎯 FINAL COMPARISON RESULTS:")
-    print(f"   R²: {baseline_results['test_r2']:.4f} → {tuned_results['test_r2']:.4f} ({improvement_r2:+.4f})")
-    print(f"   RMSE: {baseline_results['test_rmse']:.4f} → {tuned_results['test_rmse']:.4f} ({improvement_rmse:+.4f})")
-    
-    if improvement_r2 > 0:
-        print(f"   ✅ TUNING SUCCESSFUL - Model improved by {improvement_r2:.4f} in R²")
-        tuning_status = "SUCCESS"
-    else:
-        print(f"   ⚠️  Tuning didn't improve test performance")
-        tuning_status = "NO_IMPROVEMENT"
-    
-    # Log comparison results to ClearML
-    if task_logger:
-        task_logger.report_scalar('Final Comparison', 'r2_improvement', improvement_r2, iteration=0)
-        task_logger.report_scalar('Final Comparison', 'rmse_improvement', improvement_rmse, iteration=0)
-        task_logger.report_text('final_tuning_status', tuning_status)
-    
-    # Upload tuning artifacts directly
-    task.upload_artifact('best_parameters', pd.DataFrame([tuning_results['best_params']]))
-    task.upload_artifact('feature_importance_tuned', tuning_results['feature_importance'])
-    task.upload_artifact('feature_names', pd.DataFrame({'feature_names': X_train_final.columns.tolist()}))
-    
-    print(f"\n🎉 ALL PHASES COMPLETED SUCCESSFULLY!")
-    print(f" Best parameters: {tuning_results['best_params']}")
-    print(f" Tuning status: {tuning_status}")
-    print(f"✅ ONNX model uploaded to ClearML")
-    print(f"✅ Feature names uploaded to ClearML")
-    print(f"✅ All artifacts uploaded to ClearML")
-    
-    # Close ClearML task
-    task.close()
-
-    return {
-        'preprocessing_pipeline': pipe1,
-        'tuning_results': tuning_results,
-        'tuned_results': tuned_results,
-        'baseline_results': baseline_results,
-        'improvement_r2': improvement_r2,
-        'improvement_rmse': improvement_rmse,
-        'tuning_status': tuning_status,
-        'X_train': X_train_final,
-        'X_test': X_test_final,
-        'y_train': y_train_fe,
-        'y_test': y_test_fe
-    }
-
-if __name__ == "__main__":
-    results = main()
+    # ✅ Lưu 5 model sang ONNX
+    save_lgb_models_to_onnx(pipeline, save_dir="models_onnx/")
