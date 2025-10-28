@@ -761,7 +761,6 @@ def main_all_features_pipeline(data):
     print("🚀 ALL FEATURES PIPELINE - MỖI TARGET SỬ DỤNG TẤT CẢ FEATURES")
     print("=" * 80)
     print(f"🔧 Configuration: ALL FEATURES for all targets")
-    print(f"📊 Train data: {train_x.shape}, Test data: {test_x.shape}")
     # -------------------------
     # Step 2: Basic Cleaning
     # -------------------------
