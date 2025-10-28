@@ -503,44 +503,89 @@ def complete_lgb_pipeline_all_features(X_train, y_train, optimization_params=Non
 # 4. EVALUATE ON TEST SET
 # ============================================================================
 
-def evaluate_on_test_set_summary(pipeline, X_test, y_test):
+def mase(y_true, y_pred, y_train, sp=1):
+    """Mean Absolute Scaled Error"""
+    denom = np.mean(np.abs(y_train[sp:] - y_train[:-sp]))
+    return np.mean(np.abs(y_true - y_pred)) / denom if denom != 0 else np.nan
+
+def skill_score_rmse(y_true, y_pred, y_bench):
+    """Skill Score based on RMSE"""
+    rmse_model = np.sqrt(np.mean((y_true - y_pred) ** 2))
+    rmse_bench = np.sqrt(np.mean((y_true - y_bench) ** 2))
+    return 1 - rmse_model / rmse_bench if rmse_bench != 0 else np.nan
+
+def calculate_all_metrics_extended(y_true, y_pred, y_train=None, y_bench=None, tol=1.0):
+    """Tính tất cả metrics cần thiết"""
+    mae = np.mean(np.abs(y_true - y_pred))
+    rmse = np.sqrt(np.mean((y_true - y_pred)**2))
+    r2 = 1 - np.sum((y_true - y_pred)**2) / np.sum((y_true - np.mean(y_true))**2)
+    bias = np.mean(y_pred - y_true)
+    pct_within_tol = np.mean(np.abs(y_true - y_pred) <= tol) * 100
+
+    # Optional metrics
+    mase_val = mase(y_true, y_pred, y_train) if y_train is not None else np.nan
+    skill = skill_score_rmse(y_true, y_pred, y_bench) if y_bench is not None else np.nan
+
+    return {
+        "mae": mae,
+        "rmse": rmse,
+        "r2": r2,
+        "bias": bias,
+        "pct_within_tol": pct_within_tol,
+        "mase": mase_val,
+        "skill": skill
+    }
+
+def evaluate_on_test_set_summary(pipeline, X_test, y_test, train_data=None):
     """
-    Evaluate final models trên test set và in ra metrics trung bình.
-    Chỉ tập trung vào test set.
+    Evaluate final models trên test set và in ra metrics nâng cao.
+    Bao gồm: RMSE, MAE, R², MASE, Skill Score, % trong ±1°C, Bias
     """
     
     print("\n" + "="*80)
-    print("🧪 FINAL EVALUATION ON TEST SET (SUMMARY)")
+    print("🧪 FINAL EVALUATION ON TEST SET (EXTENDED SUMMARY)")
     print("="*80)
     
     test_metrics_dict = {}
     
-    # Duyệt qua tất cả targets
     for col, model_info in pipeline["models"].items():
         if model_info is None:
             continue
         
         lgb_model = model_info['model']
-        
-        # Chuẩn bị test data với tất cả features
         X_test_final, y_test_final = prepare_data(X_test, y_test[col])
         
-        # Predict và tính metrics
         y_pred_test = lgb_model.predict(X_test_final)
-        test_metrics = calculate_all_metrics(y_test_final, y_pred_test)
-        test_metrics_dict[col] = test_metrics
         
-        print(f"{col:<12} RMSE: {test_metrics['rmse']:.4f} | MAE: {test_metrics['mae']:.4f} | R²: {test_metrics['r2']:.4f}")
+        # Tạo benchmark persistence (shift 1 step)
+        y_bench = np.roll(y_test_final, 1)
+        y_bench[0] = y_bench[1]  # tránh NaN
+        
+        # Dữ liệu train tương ứng để tính MASE
+        y_train = train_data[col].values if train_data is not None and col in train_data else None
+        
+        metrics = calculate_all_metrics_extended(
+            y_test_final, y_pred_test, y_train=y_train, y_bench=y_bench
+        )
+        test_metrics_dict[col] = metrics
+        
+        print(f"{col:<10} | RMSE: {metrics['rmse']:.3f} | MAE: {metrics['mae']:.3f} | "
+                f"R²: {metrics['r2']:.3f} | MASE: {metrics['mase']:.3f} | "
+                f"Skill: {metrics['skill']:.3f} | ±1°C: {metrics['pct_within_tol']:.1f}% | "
+                f"Bias: {metrics['bias']:.3f}")
     
-    # Trung bình metrics cho tất cả target
-    avg_rmse = np.mean([m['rmse'] for m in test_metrics_dict.values()])
-    avg_mae = np.mean([m['mae'] for m in test_metrics_dict.values()])
-    avg_r2 = np.mean([m['r2'] for m in test_metrics_dict.values()])
+    # Trung bình toàn bộ targets
+    avg = {
+        k: np.nanmean([m[k] for m in test_metrics_dict.values() if not np.isnan(m[k])])
+        for k in test_metrics_dict[next(iter(test_metrics_dict))].keys()
+    }
     
     print("\n📊 Average metrics across all targets:")
-    print(f"   RMSE: {avg_rmse:.4f} | MAE: {avg_mae:.4f} | R²: {avg_r2:.4f}")
+    print(f"   RMSE: {avg['rmse']:.3f} | MAE: {avg['mae']:.3f} | R²: {avg['r2']:.3f}")
+    print(f"   MASE: {avg['mase']:.3f} | Skill: {avg['skill']:.3f} | ±1°C: {avg['pct_within_tol']:.1f}% | Bias: {avg['bias']:.3f}")
     
     return test_metrics_dict
+
 
 # ============================================================================
 # 5. COMPREHENSIVE FINAL EVALUATION - ALL DATASETS
