@@ -336,10 +336,10 @@ def get_model_params(trial,  target_name):
 
     params = {
         'n_estimators': trial.suggest_int('n_estimators', 300, 500),
-        'max_depth': trial.suggest_int('max_depth', 5, 8),
-        'min_samples_split': trial.suggest_int('min_samples_split', 10, 40),
-        'min_samples_leaf': trial.suggest_int('min_samples_leaf', 10, 25),
-        'max_features': trial.suggest_float('max_features', 0.15, 0.4),
+        'max_depth': trial.suggest_int('max_depth', 5, 6),
+        'min_samples_split': trial.suggest_int('min_samples_split', 40, 100),
+        'min_samples_leaf': trial.suggest_int('min_samples_leaf', 20, 50),
+        'max_features': trial.suggest_float('max_features', 0.05, 0.15),
     }
     
     # Horizon-based adjustments for Random Forest
