@@ -262,6 +262,8 @@ def feature_engineer(X, y):
     X_final = combined[df_final.columns]
     Y_final = combined[target_cols]
 
+    X_final.to_csv("X_train.csv", index=False)
+    Y_final.to_csv("y_train.csv", index=False)
     return X_final, Y_final
 
 # ============================================================================
