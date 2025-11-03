@@ -243,10 +243,7 @@ def feature_engineer(X, y):
 
     # Reset index
     df_final = df_indexed.reset_index()
-
-    # Loại bỏ base features
-    # cols_to_drop = [c for c in base_fea if c not in encoded_fea]
-    # df_final = df_final.drop(columns=cols_to_drop, errors='ignore')
+    df_final = df_final.dropna(axis = 0)
 
     #  QUAN TRỌNG: Tạo Y TRÊN DỮ LIỆU GỐC (trước khi dropna)
     Y_dict = {}
