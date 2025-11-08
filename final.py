@@ -17,9 +17,14 @@ import warnings
 warnings.filterwarnings('ignore')
 from clearml import Task, Logger
 
-
 import random
 import os
+
+# Create environment from YAML
+# conda env create -f environment.yml
+
+# Activate environment
+# conda activate weather_forecast
 
 def set_seed(seed=42):
     """Set global random seed for full reproducibility."""
@@ -411,7 +416,7 @@ def complete_model_pipeline_all_features(X_train, y_train,  optimization_params=
     """Pipeline với lựa chọn model"""
     
     if optimization_params is None:
-            optimization_params = {'n_trials': 20}
+            optimization_params = {'n_trials': 1}
 
         
     X_numeric = X_train.select_dtypes(include=[np.number])
@@ -643,7 +648,7 @@ def main_all_features_pipeline(data):
     pipeline = complete_model_pipeline_all_features(
         X_train=X_train_fe,
         y_train=y_train_fe,
-        optimization_params={'n_trials': 30}
+        optimization_params={'n_trials': 1}
     )
     
     # Đánh giá trên test set (metrics riêng từng target + trung bình)
@@ -695,55 +700,124 @@ def main_all_features_pipeline(data):
 # ============================================================================
 def save_models_to_onnx(pipeline, save_dir="models_onnx/"):
     """
-    Lưu LightGBM models sang ONNX sử dụng onnxmltools
+    Lưu LightGBM models sang ONNX với workaround cho isinstance bug
     """
     import os
-    try:
-        import onnxmltools
-        from onnxmltools.convert import convert_lightgbm
-    except ImportError:
-        print("📦 Installing onnxmltools...")
-        import subprocess
-        subprocess.check_call(["pip", "install", "onnxmltools"])
-        import onnxmltools
-        from onnxmltools.convert import convert_lightgbm
-
+    import sys
+    import tempfile
+    import numpy as np
+    
+    print(f"🔍 Python version: {sys.version}")
+    
+    import onnx
+    import lightgbm as lgb
+    
+    print(f"📦 Package versions:")
+    print(f"   - onnx: {onnx.__version__}")
+    print(f"   - lightgbm: {lgb.__version__}")
+    
     os.makedirs(save_dir, exist_ok=True)
     conversion_results = {"success": 0, "failed": 0}
 
     for target_name, model_info in pipeline["models"].items():
         model = model_info["model"]
         feature_names = model_info["feature_names"]
+        n_features = len(feature_names)
         
-        print(f"💾 Converting {target_name} to ONNX format...")
+        print(f"\n💾 Converting {target_name} to ONNX format...")
+        print(f"   Model type: {type(model)}")
+        print(f"   Number of features: {n_features}")
+        
         try:
-            # Convert LightGBM model to ONNX
-            initial_type = [('float_input', onnxmltools.FloatTensorType([None, len(feature_names)]))]
+            # Get booster
+            booster = model.booster_
             
-            onnx_model = convert_lightgbm(model, initial_types=initial_type)
+            # Save booster to temporary file
+            temp_model_path = tempfile.mktemp(suffix='.txt')
+            booster.save_model(temp_model_path)
+            print(f"   ✓ Saved booster to temp file")
+            
+            # Load back as pure Booster (not sklearn wrapper)
+            pure_booster = lgb.Booster(model_file=temp_model_path)
+            print(f"   ✓ Loaded as pure Booster: {type(pure_booster)}")
+            
+            # Create test input (dummy data with correct shape)
+            test_input = np.random.randn(1, n_features).astype(np.float32)
+            print(f"   ✓ Created test input with shape: {test_input.shape}")
+            
+            # Now convert using hummingbird-ml
+            try:
+                from hummingbird.ml import convert as hb_convert
+                print(f"   Using Hummingbird converter...")
+                
+                # Convert using Hummingbird with test input
+                onnx_model = hb_convert(
+                    model, 
+                    'onnx',
+                    test_input=test_input,  # Add test input here!
+                    extra_config={
+                        'onnx_target_opset': 12,
+                    }
+                ).model
+                
+            except ImportError:
+                print(f"   Hummingbird not found, installing...")
+                import subprocess
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "hummingbird-ml[onnx]"])
+                from hummingbird.ml import convert as hb_convert
+                
+                onnx_model = hb_convert(
+                    model, 
+                    'onnx',
+                    test_input=test_input,  # Add test input here!
+                    extra_config={
+                        'onnx_target_opset': 12,
+                    }
+                ).model
             
             file_path = os.path.join(save_dir, f"{target_name}.onnx")
             
             # Save ONNX model
-            with open(file_path, "wb") as f:
+            with open(file_path, 'wb') as f:
                 f.write(onnx_model.SerializeToString())
             
-            print(f"✅ Saved: {file_path}")
+            print(f"   ✅ Saved: {file_path}")
             conversion_results["success"] += 1
             
+            # Verify
+            try:
+                onnx_model_check = onnx.load(file_path)
+                onnx.checker.check_model(onnx_model_check)
+                print(f"   ✓ Model verification passed")
+            except Exception as ve:
+                print(f"   ⚠️  Verification warning: {ve}")
+            
             # Log file size
-            file_size = os.path.getsize(file_path) / 1024  # KB
+            file_size = os.path.getsize(file_path) / 1024
             logger.report_scalar(
                 title="Model Export", series=f"{target_name}_Size_KB", 
                 value=file_size, iteration=0
             )
             
+            # Clean up temp file
+            try:
+                os.remove(temp_model_path)
+            except:
+                pass
+            
         except Exception as e:
-            print(f"❌ Failed to convert {target_name}: {e}")
+            print(f"   ❌ Failed to convert {target_name}")
+            print(f"   Error: {str(e)}")
+            import traceback
+            traceback.print_exc()
             conversion_results["failed"] += 1
             continue
 
-    print(f"\n🎉 ONNX Export Summary: {conversion_results['success']} successful, {conversion_results['failed']} failed")
+    print(f"\n{'='*80}")
+    print(f"🎉 ONNX Export Summary: {conversion_results['success']} successful, {conversion_results['failed']} failed")
+    print(f"{'='*80}")
+    
+    return conversion_results
 # ============================================================================
 # 11. EXECUTION
 # ============================================================================
