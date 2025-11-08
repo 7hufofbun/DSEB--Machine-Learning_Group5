@@ -648,7 +648,7 @@ def main_all_features_pipeline(data):
     pipeline = complete_model_pipeline_all_features(
         X_train=X_train_fe,
         y_train=y_train_fe,
-        optimization_params={'n_trials': 1}
+        optimization_params={'n_trials': 30}
     )
     
     # Đánh giá trên test set (metrics riêng từng target + trung bình)
