@@ -1,6 +1,68 @@
 # Project: Ho Chi Minh Temperture Forecasting _ Group 6
 1. Introduction
 - This project focuses on forecasting daily (hourly) temperature in Ho Chi Minh using 10 years of historical weather data from Visual Crossing. By analyzing meteorological features such as humidity, solar radiation, precipitation, and moon phase, we aim to build an accurate machine learning model for short-term temperature prediction. The workflow includes data processing, feature engineering, model training, hyperparameter tuning, and deployment via a user-friendly web interface.
+
+2. Environment Setup
+
+### Prerequisites
+- Git installed ([Download here](https://git-scm.com/downloads))
+
+
+### Using pip + Virtual Environment
+
+#### Step 1: Clone the Repository
+```bash
+git clone https://github.com/7hufofbun/DSEB--Machine-Learning_Group5.git
+cd DSEB--Machine-Learning_Group5
+```
+
+#### Step 2: Create Virtual Environment
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate environment
+# Windows (PowerShell):
+.\venv\Scripts\Activate.ps1
+# Windows (Command Prompt):
+venv\Scripts\activate.bat
+# Mac/Linux:
+source venv/bin/activate
+```
+
+#### Step 3: Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+
+#### Step 4: Run the Project
+```bash
+python final.py
+```
+
+---
+
+### Package Versions (Critical for ONNX Export)
+
+**Important:** These specific versions are required for successful ONNX model export:
+
+| Package | Version | Notes |
+|---------|---------|-------|
+| Python | 3.12 | Required |
+| LightGBM | 4.3.0 | **Critical:** Version 4.6.0+ has ONNX compatibility issues |
+| ONNX | 1.16.0 | Latest stable |
+| ONNXMLTools | 1.12.0 | For model conversion |
+| ONNXRuntime | 1.18.0 | For inference |
+| skl2onnx | 1.17.0 | Sklearn to ONNX converter |
+| Hummingbird-ML | Latest | **Required for ONNX conversion** |
+| Pandas | ≥2.0.0 | Data manipulation |
+| NumPy | ≥1.24.0 | Numerical computing |
+| Scikit-learn | ≥1.3.0 | ML utilities |
+| Optuna | ≥3.0.0 | Hyperparameter tuning |
+| ClearML | ≥1.14.0 | Experiment tracking (optional) |
+
+---
+
 3. Process (process is designed to be more suitable with the pipeline)
 - Basic cleaning:
   + Dropping unecessary columns such as description, venue, longtitude,...
