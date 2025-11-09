@@ -214,7 +214,7 @@ def feature_engineer(X, y):
     if 'temp' not in df.columns:
         raise ValueError("X must contain 'temp' column as target.")
     
-    for h in [1, 2, 3, 7, 14, 21, 30]:
+    for h in [1, 2, 7, 14, 21, 30]:
         df[f'temp_lag_{h}'] = df['temp'].shift(h)
         df[f'temp_d{h}'] = df['temp'].diff(h)
 
@@ -224,14 +224,14 @@ def feature_engineer(X, y):
 
 
     # === Bước 6: Tạo lag/diff/rolling cho base_fea (không bao gồm sunrise/sunset) ===
-    for slag in [1, 3,4, 5, 6]:
+    for slag in [1, 3,4, 5]:
         for col in base_fea:
             if col in ['sunrise', 'sunset']:
                 continue
             df[f'{col}_lag_{slag}'] = df[col].shift(slag)
             df[f'{col}_d{slag}'] = df[col].diff(slag)
 
-    for w in [3, 5, 7, 14, 30]:
+    for w in [3,  7, 14, 30]:
         for col in base_fea:
             if col in ['sunrise', 'sunset']:
                 continue
@@ -308,12 +308,12 @@ def get_model_params(trial,  target_name):
         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.03, log=True),
 
         # SUBSAMPLING MẠNH HƠN
-        'feature_fraction': trial.suggest_float('feature_fraction', 0.1, 0.5),
+        'feature_fraction': trial.suggest_float('feature_fraction', 0.1, 0.4),
         'bagging_fraction': trial.suggest_float('bagging_fraction', 0.4, 0.7),
         'bagging_freq': trial.suggest_int('bagging_freq', 2, 7),
 
         # REGULARIZATION L1 / L2
-        'lambda_l1': trial.suggest_float('lambda_l1', 10, 50.0, log=True),
+        'lambda_l1': trial.suggest_float('lambda_l1', 12, 50.0, log=True),
         'lambda_l2': trial.suggest_float('lambda_l2', 10, 50.0, log=True),
     }
 
