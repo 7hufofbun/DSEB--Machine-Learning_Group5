@@ -449,8 +449,6 @@ def complete_model_pipeline_all_features(X_train, y_train,  optimization_params=
         train_metrics_dict[col] = model_result['train_metrics']
         cv_metrics_dict[col] = cv_metrics
         
-        # Kiểm tra overfitting
-        train_test_gap = model_result['train_metrics']['r2'] - cv_metrics['r2']
 
     # STEP 2: Return pipeline
     pipeline = {
@@ -497,7 +495,7 @@ def evaluate_on_test_set_summary(pipeline, X_test, y_test):
     avg_rmse = np.mean([m['rmse'] for m in test_metrics_dict.values()])
     avg_mae = np.mean([m['mae'] for m in test_metrics_dict.values()])
     avg_r2 = np.mean([m['r2'] for m in test_metrics_dict.values()])
-
+    avg_mse = np.mean([m['mse'] for m in test_metrics_dict.values()])
     
     return test_metrics_dict
 
@@ -556,11 +554,11 @@ def comprehensive_final_evaluation_with_avg(pipeline, X_train, y_train, X_test, 
         metrics_accumulator['test'].append(test_metrics)
         
         # Print detailed comparison
-        print(f"   {'Dataset':<12} {'R²':<8} {'RMSE':<10} {'MAE':<10}")
+        print(f"   {'Dataset':<12} {'R²':<8} {'RMSE':<10} {'MAE':<10} {'MSE':<10}")
         print(f"   {'-'*12} {'-'*8} {'-'*10} {'-'*10}")
-        print(f"   {'Train':<12} {train_metrics['r2']:<8.4f} {train_metrics['rmse']:<10.4f} {train_metrics['mae']:<10.4f}")
-        print(f"   {'Validation':<12} {cv_metrics['r2']:<8.4f} {cv_metrics['rmse']:<10.4f} {cv_metrics['mae']:<10.4f}")
-        print(f"   {'Test':<12} {test_metrics['r2']:<8.4f} {test_metrics['rmse']:<10.4f} {test_metrics['mae']:<10.4f}")
+        print(f"   {'Train':<12} {train_metrics['r2']:<8.4f} {train_metrics['rmse']:<10.4f} {train_metrics['mae']:<10.4f} {train_metrics['mse']:<10.4f}")
+        print(f"   {'Validation':<12} {cv_metrics['r2']:<8.4f} {cv_metrics['rmse']:<10.4f} {cv_metrics['mae']:<10.4f} {cv_metrics['mse']:<10.4f}")
+        print(f"   {'Test':<12} {test_metrics['r2']:<8.4f} {test_metrics['rmse']:<10.4f} {test_metrics['mae']:<10.4f} {test_metrics['mse']:<10.4f}")
         
     
     
@@ -576,11 +574,11 @@ def comprehensive_final_evaluation_with_avg(pipeline, X_train, y_train, X_test, 
     avg_test = average_metrics(metrics_accumulator['test'])
     
     print("\n📊 Average metrics across all targets:")
-    print(f"{'Dataset':<12} {'R²':<8} {'RMSE':<10} {'MAE':<10}")
+    print(f"{'Dataset':<12} {'R²':<8} {'RMSE':<10} {'MAE':<10} {'MSE':<10}")
     print(f"{'-'*12} {'-'*8} {'-'*10} {'-'*10}")
-    print(f"{'Train':<12} {avg_train['r2']:<8.4f} {avg_train['rmse']:<10.4f} {avg_train['mae']:<10.4f}")
-    print(f"{'Validation':<12} {avg_validation['r2']:<8.4f} {avg_validation['rmse']:<10.4f} {avg_validation['mae']:<10.4f}")
-    print(f"{'Test':<12} {avg_test['r2']:<8.4f} {avg_test['rmse']:<10.4f} {avg_test['mae']:<10.4f}")
+    print(f"{'Train':<12} {avg_train['r2']:<8.4f} {avg_train['rmse']:<10.4f} {avg_train['mae']:<10.4f} {avg_train['mse']:<10.4f}")
+    print(f"{'Validation':<12} {avg_validation['r2']:<8.4f} {avg_validation['rmse']:<10.4f} {avg_validation['mae']:<10.4f} {avg_validation['mse']:<10.4f}" )
+    print(f"{'Test':<12} {avg_test['r2']:<8.4f} {avg_test['rmse']:<10.4f} {avg_test['mae']:<10.4f} {avg_test['mse']:<10.4f}")
     
     return final_results, {'train': avg_train, 'validation': avg_validation, 'test': avg_test}
 
@@ -595,8 +593,23 @@ def analyze_overfitting(final_results):
         test_rmse = results['test']['rmse']
         gap = train_rmse - test_rmse
         
+        train_mse = results['train']['mse']
+        test_mse = results['test']['mse']
+        gap2 = train_mse - test_mse
+
+        train_mae = results['train']['mae']
+        test_mae = results['test']['mae']
+        gap3 = train_mae - test_mae
+
+        train_r2 = results['train']['r2']
+        test_r2 = results['test']['r2']
+        gap4 = train_r2 - test_r2
         print(f"\n{target}:")
         print(f"  Train RMSE: {train_rmse:.4f}, Test RMSE: {test_rmse:.4f}, Gap: {gap:.4f}")
+        print(f"  Train MSE: {train_mse:.4f}, Test MSE: {test_mse:.4f}, Gap: {gap2:.4f}")
+        print(f"  Train MAE: {train_mae:.4f}, Test MAE: {test_mae:.4f}, Gap: {gap3:.4f}")
+        print(f"  Train R2: {train_r2:.4f}, Test R2: {test_r2:.4f}, Gap: {gap4:.4f}")
+
 
 # ============================================================================
 # 9. MAIN EXECUTION FUNCTION
