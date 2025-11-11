@@ -9,24 +9,27 @@ def evaluate_on_test_set_summary(pipeline, X_test, y_test):
         y_pred_test = model.predict(X_test)
         test_metrics_dict[col] = calculate_all_metrics(y_test[col], y_pred_test)
     return test_metrics_dict
-def comprehensive_final_evaluation_with_avg(pipeline, X_train, y_train, X_test, y_test):
-    final_results = {}
-    metrics_acc = {"train": [], "validation": [], "test": []}
-    for col, model_info in pipeline["models"].items():
-        if model_info is None: continue
-        model = model_info["model"]
-        y_pred_tr  = model.predict(X_train)
-        train_m    = calculate_all_metrics(y_train[col], y_pred_tr)
-        cv_metrics = pipeline["cv_metrics"][col]
-        y_pred_te  = model.predict(X_test)
-        test_m     = calculate_all_metrics(y_test[col], y_pred_te)
-        final_results[col] = {"train": train_m, "validation": cv_metrics, "test": test_m}
-        metrics_acc["train"].append(train_m)
-        metrics_acc["validation"].append(cv_metrics)
-        metrics_acc["test"].append(test_m)
-    def avg(ms): return {k: np.mean([m[k] for m in ms]) for k in ["rmse", "mae", "r2", "mse"]}
-    return final_results, {"train": avg(metrics_acc["train"]), "validation": avg(metrics_acc["validation"]), "test": avg(metrics_acc["test"])}
-def analyze_overfitting(final_results):
-    for target, results in final_results.items():
-        tr, te = results["train"], results["test"]
-        print(f"\n{target}: Train RMSE={tr['rmse']:.4f} vs Test RMSE={te['rmse']:.4f} | Train R2={tr['r2']:.4f} vs Test R2={te['r2']:.4f}")
+def comprehensive_final_evaluation_with_avg(final_models, X_train, y_train,X_test, y_test):
+    results_per_target = {}
+    train_metrics_accumulator = []
+    test_metrics_accumulator = []
+    for col, model_info in final_models.items():
+        if model_info is None:
+            continue
+        model = model_info['model']
+        X_train_final, y_train_final = X_train.copy(), y_train[col].copy()
+        y_pred_train = model.predict(X_train_final)
+        train_metrics = calculate_all_metrics(y_train_final, y_pred_train)
+        train_metrics_accumulator.append(train_metrics)
+        X_test_final, y_test_final = X_test.copy(), y_test[col].copy()
+        y_pred_test = model.predict(X_test_final)
+        test_metrics = calculate_all_metrics(y_test_final, y_pred_test)
+        test_metrics_accumulator.append(test_metrics)
+        results_per_target[col] = {
+            'train': train_metrics,
+            'test': test_metrics
+        }
+    avg_train = {k: np.mean([m[k] for m in train_metrics_accumulator]) for k in ['rmse', 'mae', 'r2', 'mse']}
+    avg_test  = {k: np.mean([m[k] for m in test_metrics_accumulator]) for k in ['rmse', 'mae', 'r2', 'mse']}
+    return results_per_target, {'train': avg_train, 'test': avg_test}
+
