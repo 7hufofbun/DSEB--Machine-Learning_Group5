@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: weather-forecast-api
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    envVars:
+      - key: MODEL_DIR
+        value: models
+      - key: SCHEMA_DIR
+        value: schemas
+      - key: DATA_CSV_DAILY
+        value: data/weather_hcm_daily.csv
