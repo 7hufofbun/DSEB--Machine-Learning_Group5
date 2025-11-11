@@ -2,11 +2,16 @@ from .utils import set_seed, init_clearml
 from .io import get_data
 from .preprocessing import basic_cleaning, split_data, Preprocessor
 from .features import feature_engineer
-from .model.pipeline import complete_model_pipeline_all_features
-from .evaluation import evaluate_on_test_set_summary, comprehensive_final_evaluation_with_avg, analyze_overfitting
+from .model.pipeline import complete_model_pipeline
+from .model.tuning import *
+from .evaluation import evaluate_on_test_set_summary, comprehensive_final_evaluation_with_avg
 from .export import save_models_to_onnx
 import argparse
 from pathlib import Path
+from .model.lgbm import train_final_model_all_features
+
+
+
 
 DEFAULT_DATA = "https://raw.githubusercontent.com/7hufofbun/DSEB--Machine-Learning_Group5/refs/heads/main/data/weather_hcm_daily.csv"
 
@@ -18,26 +23,67 @@ def main_all_features_pipeline(data, logger):
         pass
 
     train_x, train_y, test_x, test_y = split_data(data)
-    pre = Preprocessor(threshold=50, var_threshold=0.0)
-    X_train_p = pre.fit_transform(train_x)
-    X_test_p  = pre.transform(test_x)
-
-    X_tr_fe, y_tr_fe = feature_engineer(X_train_p, train_y)
-    X_te_fe, y_te_fe = feature_engineer(X_test_p,  test_y)
-
-    pipeline = complete_model_pipeline_all_features(
-        X_train=X_tr_fe, y_train=y_tr_fe, optimization_params={"n_trials": 30}
+    print(f"📊 Train data: {train_x.shape}, Test data: {test_x.shape}")
+    logger.report_scalar(
+        title="Data Split", series="Train Samples", value=len(train_x), iteration=0
     )
-    _ = evaluate_on_test_set_summary(pipeline, X_te_fe, y_te_fe)
+    logger.report_scalar(
+        title="Data Split", series="Test Samples", value=len(test_x), iteration=0
+    )
+    preprocessor = Preprocessor(threshold=50, var_threshold=0.0)
+    pipeline = complete_model_pipeline(
+        train_x, train_y, preprocessor,
+        optimization_params={'n_trials': 30}
+    )
+    final_models = {}
+    for col in [f"temp_t+{i}" for i in range(1, 6)]:
+        print("\n" + "="*60)
+        print(f"🚀 Fitting FINAL model on full train set for: {col}")
+        print("="*60)
+        best_params = pipeline['best_params'][col]
+        model_result = train_final_model_all_features(
+            train_x, train_y, best_params, preprocessor, col
+        )
+        final_models[col] = model_result
+
+    pipeline['models'] = final_models
+
+    X_train_processed = preprocessor.transform(train_x)
+    X_test_processed  = preprocessor.transform(test_x)
+
+    X_train_fe, y_train_fe = feature_engineer(X_train_processed, train_y)
+    X_test_fe, y_test_fe   = feature_engineer(X_test_processed, test_y)
+
     final_results, avg_metrics = comprehensive_final_evaluation_with_avg(
-        pipeline, X_tr_fe, y_tr_fe, X_te_fe, y_te_fe
+        pipeline['models'], X_train_fe, y_train_fe, X_test_fe, y_test_fe
     )
-    pipeline["test_metrics"] = avg_metrics["test"]
-    pipeline["final_results"] = final_results
-    pipeline["input_dim"] = X_tr_fe.shape[1]
 
-    analyze_overfitting(final_results)
+    for iteration_variable, (target_name, metrics) in enumerate(final_results.items()):
+        for dataset_type in ['train', 'test']:
+            metric_dict = metrics[dataset_type]
+            logger.report_scalar(
+                title=f"Metrics/{target_name}", series=f"R2_{dataset_type}",
+                value=metric_dict['r2'], iteration=iteration_variable
+            )
+            logger.report_scalar(
+                title=f"Metrics/{target_name}", series=f"RMSE_{dataset_type}",
+                value=metric_dict['rmse'], iteration=iteration_variable
+            )
+            logger.report_scalar(
+                title=f"Metrics/{target_name}", series=f"MAE_{dataset_type}",
+                value=metric_dict['mae'], iteration=iteration_variable
+            )
+    logger.report_scalar(title="Average Metrics", series="R2_Train", value=avg_metrics['train']['r2'], iteration=0)
+    logger.report_scalar(title="Average Metrics", series="R2_Test",  value=avg_metrics['test']['r2'], iteration=0)
+    logger.report_scalar(title="Average Metrics", series="RMSE_Train", value=avg_metrics['train']['rmse'], iteration=0)
+    logger.report_scalar(title="Average Metrics", series="RMSE_Test",  value=avg_metrics['test']['rmse'], iteration=0)
+
+    pipeline['final_results'] = final_results
+    pipeline['test_metrics'] = avg_metrics['test']
+    pipeline['train_metrics'] = avg_metrics['train']
+
     return pipeline, final_results
+
 
 def parse_args():
     p = argparse.ArgumentParser()

@@ -14,4 +14,6 @@ def init_clearml(task_name="LGBM All Features Pipeline", project_name="Weather F
         print(f"ClearML not available: {e}")
         return None, DummyLogger()
 def set_seed(seed=42):
-    np.random.seed(seed); random.seed(seed); os.environ["PYTHONHASHSEED"]=str(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"]=str(seed)
