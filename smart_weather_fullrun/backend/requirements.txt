@@ -5,8 +5,11 @@ python-dateutil==2.9.0.post0
 pandas==2.2.2
 numpy==1.26.4
 scikit-learn==1.4.2
-lightgbm==4.5.0
+lightgbm==4.3.0
 optuna==3.6.1
 onnx==1.16.0
-onnxruntime==1.18.0
+onnxruntime==1.17.3
 hummingbird-ml==0.4.9
+skl2onnx==1.16.0
+onnxmltools==1.12.0
+
