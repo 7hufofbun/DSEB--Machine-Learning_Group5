@@ -6,19 +6,11 @@ import pandas as pd
 from io import StringIO
 import time
 
-BASE_DIR = os.path.dirname(__file__)
-DAILY_PATH =  os.environ.get(
-    "WEATHER_DAILY_CSV", 
-    os.path.join(BASE_DIR, "data", "weather_hcm_daily.csv")
-)
-HOURLY_PATH = os.environ.get(
-    "WEATHER_HOURLY_CSV", 
-    os.path.join(BASE_DIR, "data", "weather_hcm_hourly.csv")
-)
-if not os.path.exists(DAILY_PATH) and os.path.exists("/mnt/data/weather_hcm_daily.csv"):
-    DAILY_PATH = "/mnt/data/weather_hcm_daily.csv"
-if not os.path.exists(HOURLY_PATH) and os.path.exists("/mnt/data/weather_hcm_hourly.csv"):
-    HOURLY_PATH = "/mnt/data/weather_hcm_hourly.csv"
+BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "..")  
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+DAILY_PATH = os.path.join(DATA_DIR, "weather_hcm_daily.csv")
+HOURLY_PATH = os.path.join(DATA_DIR, "weather_hcm_hourly.csv")
 
 LOCATION = "Ho Chi Minh City, Vietnam"
 API_KEY = os.getenv("WEATHER_API_KEY", "")
