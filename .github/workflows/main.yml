@@ -27,6 +27,15 @@ jobs:
         run: |
           echo "API_KEY length: ${#WEATHER_API_KEY}"
 
+      - name: Check CSV files before fetch
+        run: |
+          echo "Listing data folder:"
+          ls smart_weather_fullrun/backend/data
+          echo "First 5 lines of DAILY CSV:"
+          head -n 5 smart_weather_fullrun/backend/data/weather_hcm_daily.csv || echo "File does not exist"
+          echo "First 5 lines of HOURLY CSV:"
+          head -n 5 smart_weather_fullrun/backend/data/weather_hcm_hourly.csv || echo "File does not exist"
+
       - name: Run fetch_data.py
         env:
           WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
