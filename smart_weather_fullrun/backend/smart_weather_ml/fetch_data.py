@@ -98,7 +98,9 @@ def append_directly(new_data, csv_file_path, reorder_columns=True):
 
 # === Chạy chính ===
 if __name__ == "__main__":
-    today = datetime.now(timezone.utc).date()
+    VN_TZ = timezone(timedelta(hours=7))
+    today = datetime.now(VN_TZ).date()
+
     try:
         # === DAILY ===
         daily = download_weather_data(
@@ -112,6 +114,7 @@ if __name__ == "__main__":
         if not daily.empty:
             append_directly(daily, DAILY_PATH)
 
+        # === HOURLY ===
         hourly = download_weather_data(
             location=LOCATION,
             start_date=today.strftime("%Y-%m-%d"),
