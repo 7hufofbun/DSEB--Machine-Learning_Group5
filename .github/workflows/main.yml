@@ -3,7 +3,7 @@ name: Fetch Weather Data
 on:
   schedule:
     - cron: '0 15 * * *' # 22:00 VN (15:00 UTC)
-  workflow_dispatch: # Cho phép trigger thủ công
+  workflow_dispatch:
 
 jobs:
   fetch:
@@ -20,6 +20,12 @@ jobs:
       - name: Install dependencies
         run: |
           pip install pandas requests
+
+      - name: Check API key
+        env:
+          WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
+        run: |
+          echo "API_KEY length: ${#WEATHER_API_KEY}"
 
       - name: Run fetch_data.py
         env:
