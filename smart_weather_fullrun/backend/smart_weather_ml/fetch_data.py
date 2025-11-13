@@ -6,8 +6,8 @@ import pandas as pd
 from io import StringIO
 import time
 
-DAILY_PATH = "smart_weather_fullrun/backend/data/weather_hcm_daily.csv"
-HOURLY_PATH = "smart_weather_fullrun/backend/data/weather_hcm_hourly.csv"
+DAILY_PATH = "DSEB--Machine-Learning_Group5/smart_weather_fullrun/backend/data/weather_hcm_daily.csv"
+HOURLY_PATH = "DSEB--Machine-Learning_Group5/smart_weather_fullrun/backend/data/weather_hcm_hourly.csv"
 
 LOCATION = "Ho Chi Minh City, Vietnam"
 API_KEY = os.getenv("WEATHER_API_KEY", "")
