@@ -1,0 +1,28 @@
+name: Fetch Weather Data
+
+on:
+  schedule:
+    - cron: '0 15 * * *' # 22:00 VN (15:00 UTC)
+  workflow_dispatch: # Cho phép trigger thủ công
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install dependencies
+        run: |
+          pip install pandas requests
+
+      - name: Run fetch_data.py
+        env:
+          WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
+        run: |
+          python src/fetch_data.py
