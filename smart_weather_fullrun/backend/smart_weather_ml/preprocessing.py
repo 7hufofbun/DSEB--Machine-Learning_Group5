@@ -10,7 +10,7 @@ def basic_cleaning(data: pd.DataFrame) -> pd.DataFrame:
     for col in ["datetime", "sunrise", "sunset"]:
         if col in data.columns:
             data[col] = pd.to_datetime(data[col], errors="coerce")
-    data.drop("description", axis=1, inplace=True, errors="ignore")
+    data.drop(["description", "name", "address", "resolvedAddress", "latitude", "longitude", "source"], axis=1, inplace=True, errors="ignore")
     return data
 
 def split_data(data: pd.DataFrame):
