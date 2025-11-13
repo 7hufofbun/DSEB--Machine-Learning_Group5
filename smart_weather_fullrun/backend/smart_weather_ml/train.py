@@ -9,11 +9,11 @@ from .export import save_models_to_onnx
 import argparse
 from pathlib import Path
 from .model.lgbm import train_final_model_all_features
+import os
 
-
-
-
-DEFAULT_DATA = "https://raw.githubusercontent.com/7hufofbun/DSEB--Machine-Learning_Group5/refs/heads/main/data/weather_hcm_daily.csv"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+DEFAULT_DATA = os.path.join(DATA_DIR, "weather_hcm_daily.csv")
 
 def main_all_features_pipeline(data, logger):
     data = basic_cleaning(data)
