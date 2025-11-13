@@ -6,11 +6,8 @@ import pandas as pd
 from io import StringIO
 import time
 
-BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "..")  
-DATA_DIR = os.path.join(BASE_DIR, "data")
-
-DAILY_PATH = os.path.join(DATA_DIR, "weather_hcm_daily.csv")
-HOURLY_PATH = os.path.join(DATA_DIR, "weather_hcm_hourly.csv")
+DAILY_PATH = "smart_weather_fullrun/backend/data/weather_hcm_daily.csv"
+HOURLY_PATH = "smart_weather_fullrun/backend/data/weather_hcm_hourly.csv"
 
 LOCATION = "Ho Chi Minh City, Vietnam"
 API_KEY = os.getenv("WEATHER_API_KEY", "")
