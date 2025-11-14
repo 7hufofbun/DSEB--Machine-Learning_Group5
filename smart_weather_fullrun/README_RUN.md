@@ -11,14 +11,13 @@ D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\backend\smar
 
 ```powershell
 # 0) Mở PowerShell mới
-cd D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\backend\smart_weather_ml
+cd D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\backend
 
 # 1) Tạo & kích hoạt venv (chỉ cần 1 lần, sau đó chỉ Activate)
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
 # 2) Cài thư viện
-pip install --upgrade pip
 pip install -r requirements.txt
 
 # (Tuỳ chọn) 3) Train lại & export ONNX nếu thư mục models_onnx đang rỗng

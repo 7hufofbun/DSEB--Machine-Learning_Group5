@@ -9,8 +9,8 @@ import pandas as pd
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from smart_weather_ml.preprocessing import Preprocessor
-from smart_weather_ml.features import feature_engineer
+from smart_weather_ml.model.preprocessing import Preprocessor
+from smart_weather_ml.model.features import feature_engineer
 
 try:
     import onnxruntime as ort
