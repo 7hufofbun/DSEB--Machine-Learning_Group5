@@ -1,3 +1,4 @@
+
 import numpy as np
 import optuna
 from sklearn.model_selection import TimeSeriesSplit
@@ -9,44 +10,24 @@ from lightgbm import LGBMRegressor, early_stopping, log_evaluation
 def objective_all_features(trial, X_train, y_train, target_name, preprocessor):
     params = get_model_params(trial)
     all_train_metrics = {'mae': [], 'rmse': [], 'r2': [], 'mse': []}
-    
-    # X_train is already preprocessed, y_train is the specific target column (Series)
     X_final, y_final = X_train.copy(), y_train.copy()
-    
     tscv = TimeSeriesSplit(n_splits=4)
     all_metrics = {'mae': [], 'rmse': [], 'r2': [], 'mse': []}
-    
     for train_idx, val_idx in tscv.split(X_final):
         X_tr_r, X_val_r = X_final.iloc[train_idx], X_final.iloc[val_idx]
         y_tr_r, y_val_r = y_final.iloc[train_idx], y_final.iloc[val_idx]
-        
-        # Feature engineer (X already preprocessed, just needs datetime for feature engineering)
-        # But X_final doesn't have datetime anymore after preprocessing
-        # So we need to handle this differently
-        
-        # Since X is already preprocessed and doesn't have datetime,
-        # we can't call feature_engineer here
-        # The feature engineering should have been done BEFORE optimization
-        
-        X_tr = X_tr_r
-        X_val = X_val_r
-        y_tr = y_tr_r
-        y_val = y_val_r
-        
-        # Drop datetime columns if they exist
-        datetime_cols = ['datetime', 'sunrise', 'sunset']
-        for col in datetime_cols:
-            if col in X_tr.columns:
-                X_tr = X_tr.drop(col, axis=1)
-            if col in X_val.columns:
-                X_val = X_val.drop(col, axis=1)
-        
-        model = get_model(params)
+        X_tr_p = preprocessor.fit_transform(X_tr_r)
+        X_val_p = preprocessor.transform(X_val_r)
+        X_tr, y_tr_fe = feature_engineer(X_tr_p, y_tr_r)
+        X_val, y_val_fe = feature_engineer(X_val_p, y_val_r)
+        y_tr = y_tr_fe[target_name]
+        y_val = y_val_fe[target_name]
+        model = get_model( params)
         model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)],
             eval_metric='rmse',
             callbacks=[
                 early_stopping(stopping_rounds=200, verbose=False),
-                log_evaluation(0)
+                log_evaluation(0)  # Không hiển thị log
             ])
         
         y_pred_train = model.predict(X_tr)
@@ -67,9 +48,9 @@ def objective_all_features(trial, X_train, y_train, target_name, preprocessor):
     score = mean_metrics['rmse'] * (1.0 + 0.3 * (1 - mean_metrics['r2']))
     return score
 
-def optimize_model_all_features(X_train, y_train, target_name, preprocessor, n_trials=50):
+def optimize_model_all_features(X_train, y_train, target_name,  preprocessor, n_trials=50):
     sampler = optuna.samplers.TPESampler(seed=42)
-    pruner = optuna.pruners.MedianPruner(n_warmup_steps=5)
+    pruner=optuna.pruners.MedianPruner(n_warmup_steps=5)
     study = optuna.create_study(direction='minimize', sampler=sampler, pruner=pruner)
     study.optimize(
         lambda trial: objective_all_features(trial, X_train, y_train, target_name, preprocessor),
@@ -79,3 +60,4 @@ def optimize_model_all_features(X_train, y_train, target_name, preprocessor, n_t
     best_metrics = study.best_trial.user_attrs['metrics']
     train_metrics = study.best_trial.user_attrs.get('train_metrics', None)
     return study.best_params, best_metrics, train_metrics
+

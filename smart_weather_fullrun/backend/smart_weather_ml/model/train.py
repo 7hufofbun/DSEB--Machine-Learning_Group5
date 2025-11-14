@@ -11,9 +11,9 @@ from pathlib import Path
 from .lgbm import train_final_model_all_features
 import os
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.join(BASE_DIR, "data")
-DAILY_PATH = os.path.join(DATA_DIR, "weather_hcm_daily.csv")
+DEFAULT_DATA = os.path.join(DATA_DIR, "weather_hcm_daily.csv")
 def main_all_features_pipeline(data, logger):
     data = basic_cleaning(data)
     try:
@@ -84,6 +84,7 @@ def main_all_features_pipeline(data, logger):
     return pipeline, final_results
 
 
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--data", default=DEFAULT_DATA, help="CSV path or URL for training data")
@@ -120,5 +121,7 @@ if __name__ == "__main__":
                 task.upload_artifact(name=f"{target_name}_onnx_model", artifact_object=model_path)
             logger.report_scalar(title="Final Performance", series="Average_Test_R2",   value=pipeline["test_metrics"]["r2"],   iteration=0)
             logger.report_scalar(title="Final Performance", series="Average_Test_RMSE", value=pipeline["test_metrics"]["rmse"], iteration=0)
+            logger.report_scalar(title="Final Performance", series="Average_Test_MSE", value=pipeline["test_metrics"]["mse"], iteration=0)
+            logger.report_scalar(title="Final Performance", series="Average_Test_MAE", value=pipeline["test_metrics"]["mae"], iteration=0)
         except Exception as e:
             print(f"ClearML artifact upload failed: {e}")
