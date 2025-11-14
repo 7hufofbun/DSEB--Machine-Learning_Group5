@@ -22,7 +22,7 @@ pip install -r requirements.txt
 
 # (Tuỳ chọn) 3) Train lại & export ONNX nếu thư mục models_onnx đang rỗng
 #   → chạy lệnh sau sẽ tự train + export .onnx
-python -m model.train --save_dir models_onnx --overwrite
+python -m smart_weather_ml.model.train --save_dir models_onnx --overwrite
 
 # Kiểm tra đã có model ONNX chưa
 Get-ChildItem .\models_onnx\*.onnx | Select Name,Length,LastWriteTime
