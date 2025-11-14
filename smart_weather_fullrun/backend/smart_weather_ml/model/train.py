@@ -32,7 +32,7 @@ def main_all_features_pipeline(data, logger):
     preprocessor = Preprocessor(threshold=50, var_threshold=0.0)
     pipeline = complete_model_pipeline(
         train_x, train_y, preprocessor,
-        optimization_params={'n_trials': 50}
+        optimization_params={'n_trials': 35}
     )
     final_models = {}
     for col in [f"temp_t+{i}" for i in range(1, 6)]:
