@@ -1,6 +1,4 @@
 
-import numpy as np
-import pandas as pd
 
 import numpy as np
 import pandas as pd
@@ -36,14 +34,14 @@ def feature_engineer(X, y):
     if 'temp' not in df.columns:
         raise ValueError("X must contain 'temp' column as target.")
     
-    for h in [1, 2, 7]:
+    for h in [1, 2, 3, 7]:
         df[f'temp_lag_{h}'] = df['temp'].shift(h)
         df[f'temp_d{h}'] = df['temp'].diff(h)
 
     for j in [3,7, 14, 30]:
         df[f'temp_rolling_mean_{j}'] = df['temp'].shift(1).rolling(j, min_periods = 1).mean()
         df[f'temp_rolling_std_{j}'] = df['temp'].shift(1).rolling(j, min_periods = 1).std()
-    for slag in [1, 3, 4]:
+    for slag in [1, 3, 4, 5]:
         for col in base_fea:
             if col in ['sunrise', 'sunset']:
                 continue
