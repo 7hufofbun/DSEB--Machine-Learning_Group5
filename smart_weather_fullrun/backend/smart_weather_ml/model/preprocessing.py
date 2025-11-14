@@ -100,8 +100,9 @@ class Preprocessor(BaseEstimator, TransformerMixin):
     def transform(self, X, y=None):
         df = X.copy()
 
-        # Giữ datetime riêng (nếu có)
-        datetime_values = df[self.datetime_cols].copy() if all(col in df.columns for col in self.datetime_cols) else pd.DataFrame()
+        # Preserve any datetime-like columns that are available so downstream feature engineering keeps temporal context
+        datetime_present = [col for col in self.datetime_cols if col in df.columns]
+        datetime_values = df[datetime_present].copy()
 
         temp_df = df.drop(columns=self.datetime_cols, errors='ignore')
 

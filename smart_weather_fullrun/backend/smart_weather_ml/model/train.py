@@ -10,10 +10,23 @@ import argparse
 from pathlib import Path
 from .lgbm import train_final_model_all_features
 import os
+import json
+
+FEATURE_COLS_PATH = Path(__file__).with_name("feature_cols.json")
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DEFAULT_DATA = os.path.join(DATA_DIR, "weather_hcm_daily.csv")
+
+
+def _save_feature_columns(feature_columns):
+    try:
+        FEATURE_COLS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        FEATURE_COLS_PATH.write_text(json.dumps(feature_columns, ensure_ascii=False, indent=2))
+        print(f"Saved feature column list to {FEATURE_COLS_PATH}")
+    except Exception as exc:
+        print(f"Failed to persist feature columns: {exc}")
+
 def main_all_features_pipeline(data, logger):
     data = basic_cleaning(data)
     try:
@@ -52,6 +65,10 @@ def main_all_features_pipeline(data, logger):
 
     X_train_fe, y_train_fe = feature_engineer(X_train_processed, train_y)
     X_test_fe, y_test_fe   = feature_engineer(X_test_processed, test_y)
+
+    feature_columns = X_train_fe.columns.tolist()
+    pipeline['feature_columns'] = feature_columns
+    _save_feature_columns(feature_columns)
 
     final_results, avg_metrics = comprehensive_final_evaluation_with_avg(
         pipeline['models'], X_train_fe, y_train_fe, X_test_fe, y_test_fe

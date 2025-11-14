@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 import os
+import json
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
@@ -29,6 +31,33 @@ app.add_middleware(
 BASE_DIR = os.path.dirname(__file__)
 DAILY_CSV = os.environ.get("WEATHER_DAILY_CSV", os.path.join(BASE_DIR, "data", "weather_hcm_daily.csv"))
 HOURLY_CSV = os.environ.get("WEATHER_HOURLY_CSV", os.path.join(BASE_DIR, "data", "weather_hcm_hourly.csv"))
+
+_feature_cols_candidates = [
+    Path(BASE_DIR) / "smart_weather_ml" / "model" / "feature_cols.json",
+    Path(BASE_DIR) / "models_onnx" / "feature_cols.json",
+]
+FEATURE_COLS: Optional[List[str]] = None
+
+
+def _load_feature_cols() -> Optional[List[str]]:
+    """Load ONNX feature column ordering once the metadata file exists."""
+    global FEATURE_COLS
+    if FEATURE_COLS:
+        return FEATURE_COLS
+    for candidate in _feature_cols_candidates:
+        try:
+            with candidate.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    FEATURE_COLS = data
+                    return FEATURE_COLS
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+    return None
+
+
+if _load_feature_cols() is None:
+    print("[forecast] feature_cols.json not found; ONNX inputs may misalign.")
 
 if not os.path.exists(DAILY_CSV) and os.path.exists("/mnt/data/weather_hcm_daily.csv"):
     DAILY_CSV = "/mnt/data/weather_hcm_daily.csv"
@@ -60,7 +89,7 @@ def get_hourly_df() -> pd.DataFrame:
     if _hourly_df_cache is None:
         _hourly_df_cache = _read_csv_safe(HOURLY_CSV)
         if not _hourly_df_cache.empty and "datetime" in _hourly_df_cache.columns:
-            _hourly_df_cache = _hourly_df_cache.sort_values("datetime").reset_index(drop_by=True)
+            _hourly_df_cache = _hourly_df_cache.sort_values("datetime").reset_index(drop=True)
     return _hourly_df_cache.copy() if _hourly_df_cache is not None else pd.DataFrame()
 
 class OnnxBundle:
@@ -138,7 +167,13 @@ def _f(x):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "daily_csv": DAILY_CSV, "hourly_csv": HOURLY_CSV, "onnx_loaded": ONNX.loaded}
+    return {
+        "ok": True,
+        "daily_csv": DAILY_CSV,
+        "hourly_csv": HOURLY_CSV,
+        "onnx_loaded": ONNX.loaded,
+        "feature_columns": len(_load_feature_cols() or []),
+    }
 
 @app.get("/now")
 def now():
@@ -252,6 +287,11 @@ def forecast_detailed() -> List[Dict[str, Any]]:
         Xp = pre.fit_transform(X_all)
         Xe, Ye = feature_engineer(Xp, y_all)
         if len(Xe) > 0:
+            Xe = Xe.copy()
+            Xe = Xe.fillna(0.0)
+            feature_cols = _load_feature_cols()
+            if feature_cols:
+                Xe = Xe.reindex(columns=feature_cols, fill_value=0.0)
             x_last = Xe.tail(1).astype(np.float32).to_numpy()
             preds = ONNX.predict(x_last)
             if preds:

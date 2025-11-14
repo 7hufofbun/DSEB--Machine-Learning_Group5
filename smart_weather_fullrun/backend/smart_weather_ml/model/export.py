@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import numpy as np
 import traceback
+import json
 
 # --- Optional imports (có thể vắng mặt, ta sẽ fallback) ---
 try:
@@ -91,6 +92,7 @@ def _infer_input_dim(pipeline) -> int:
       - pipeline['input_dim'] hoặc pipeline['feature_dim']
       - pipeline['X_example'].shape[1] nếu có
       - lấy từ model.n_features_in_ của bất kỳ estimator nào
+            - fallback từ wrapper metadata như 'n_features'
       - cuối cùng fallback = 20
     """
     dim = (
@@ -102,9 +104,18 @@ def _infer_input_dim(pipeline) -> int:
         return int(dim)
 
     for m in (pipeline.get("models") or {}).values():
+        # Ưu tiên metadata nếu wrapper là dict
+        if isinstance(m, dict):
+            n_features = m.get("n_features") or m.get("feature_dim")
+            if n_features:
+                return int(n_features)
+
         kind, est = _unwrap_model(m)
-        if kind == "sklearn" and hasattr(est, "n_features_in_"):
-            return int(est.n_features_in_)
+        if kind == "sklearn":
+            if hasattr(est, "n_features_in_"):
+                return int(est.n_features_in_)
+            if hasattr(est, "n_features_"):
+                return int(est.n_features_)
 
     return 20  # fallback an toàn
 
@@ -130,6 +141,7 @@ def save_models_to_onnx(pipeline, save_dir="models_onnx", logger=None, overwrite
     save_dir.mkdir(parents=True, exist_ok=True)
 
     written, skipped = [], []
+    feature_columns = pipeline.get("feature_columns") if isinstance(pipeline, dict) else None
     default_input_dim = _infer_input_dim(pipeline)
 
     models = pipeline.get("models") or {}
@@ -148,6 +160,17 @@ def save_models_to_onnx(pipeline, save_dir="models_onnx", logger=None, overwrite
         kind, est = _unwrap_model(model)
 
         try:
+            # Thu thập thông tin số chiều đầu vào từ nhiều nguồn
+            wrapper_n_features = None
+            if isinstance(model, dict):
+                wrapper_n_features = model.get("n_features") or model.get("feature_dim")
+
+            attr_n_features = (
+                getattr(est, "n_features_in_", None)
+                or getattr(est, "n_features_", None)
+            )
+            input_dim = int(attr_n_features or wrapper_n_features or default_input_dim)
+
             if kind == "onnx":
                 # Đã là ModelProto -> ghi thẳng
                 save_onnx_atomic(est, out_path)
@@ -156,7 +179,6 @@ def save_models_to_onnx(pipeline, save_dir="models_onnx", logger=None, overwrite
                 continue
 
             # sklearn estimator/pipeline
-            input_dim = int(getattr(est, "n_features_in_", default_input_dim))
             exported = False
 
             # --- Nhánh LightGBM: ưu tiên Hummingbird, rồi onnxmltools ---
@@ -222,5 +244,13 @@ def save_models_to_onnx(pipeline, save_dir="models_onnx", logger=None, overwrite
 
         except Exception as e:
             _log(logger, f"[export] ERROR for target '{target_name}': {e}\n{traceback.format_exc()}")
+
+    if feature_columns:
+        feature_cols_path = save_dir / "feature_cols.json"
+        try:
+            feature_cols_path.write_text(json.dumps(feature_columns, ensure_ascii=False, indent=2))
+            _log(logger, f"[export] Wrote feature column list: {feature_cols_path}")
+        except Exception as exc:
+            _log(logger, f"[export] Failed to write feature column metadata: {exc}")
 
     return {"written": written, "skipped": skipped}
