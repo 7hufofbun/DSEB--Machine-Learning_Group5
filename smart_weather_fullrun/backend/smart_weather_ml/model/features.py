@@ -12,7 +12,7 @@ def feature_engineer(X, y):
     df = df.set_index('datetime').sort_index()
     cols_to_drop = ['feelslikemax', 'feelslikemin',  'moonphase', 'visibility']
     df.drop(cols_to_drop, axis=1, errors='ignore', inplace = True)
-    encoded_fea = ['conditions_clear', 'conditions_partially_cloudy', 'conditions_rain__overcast', 'conditions_rain__partially_cloudy', 'icon_clear-day', 'icon_partly-cloudy-day', 'icon_rain']
+    encoded_fea = ['conditions_clear', 'conditions_partially_cloudy', 'conditions_rain__overcast', 'conditions_rain__partially_cloudy', 'icon_clear_day', 'icon_partly_cloudy_day', 'icon_rain']
     base_fea = [col for col in df.columns if col not in encoded_fea]
     df['trend'] = np.arange(len(df))
     df['dayofyear'] = df.index.dayofyear

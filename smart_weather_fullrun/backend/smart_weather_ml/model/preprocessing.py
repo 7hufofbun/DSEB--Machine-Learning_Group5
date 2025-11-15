@@ -88,7 +88,7 @@ class Preprocessor(BaseEstimator, TransformerMixin):
         if len(self.categorical_cols_to_keep_) > 0:
             self.ohe = OneHotEncoder(sparse_output=False, handle_unknown="ignore")
             self.ohe.fit(temp_df[self.categorical_cols_to_keep_])
-            self.ohe_cols_ =  [col.lower().replace(' ', r'_').replace(',', r'_').replace('.', r'_') for col in list(self.ohe.get_feature_names_out(self.categorical_cols_to_keep_))]
+            self.ohe_cols_ =  [col.lower().replace(' ', r'_').replace(',', r'_').replace('.', r'_').replace('-', r'_') for col in list(self.ohe.get_feature_names_out(self.categorical_cols_to_keep_))]
         else:
             self.ohe = None
             self.ohe_cols_ = []
