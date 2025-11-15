@@ -1,9 +1,31 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, ComposedChart } from "recharts";
-import { Lightbulb, CloudRain, CloudSun, Cloud, Sun, CloudDrizzle, ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
-import { apiPost } from "../lib/api";
+import {
+  Area,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ComposedChart,
+  type TooltipProps,
+} from "recharts";
+import {
+  Lightbulb,
+  CloudRain,
+  CloudSun,
+  Cloud,
+  Sun,
+  CloudDrizzle,
+  ArrowDownRight,
+  ArrowUpRight,
+  Minus,
+  ChevronDown,
+} from "lucide-react";
+import { apiGet, apiPost } from "../lib/api";
 import { formatTemperature, roundToTenth } from "../lib/format";
+import "./ForecastChart.css";
 
 type Item = {
   day: string;
@@ -14,6 +36,11 @@ type Item = {
   precipChance: number;
   calendarDate?: string;
   displayDate?: string;
+};
+
+type NowResponse = {
+  temperature?: number;
+  feels_like?: number;
 };
 
 const getWeatherIcon = (condition: string) => {
@@ -128,94 +155,280 @@ const trendIcon = (delta: number | null) => {
 
 export function ForecastChart() {
   const [items, setItems] = useState<Item[]>([]);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [currentTemp, setCurrentTemp] = useState<number | null>(null);
   useEffect(() => {
-    apiPost<Item[]>("/forecast_detailed").then(data => {
-      const normalised = data.map(item => {
-        const avg = roundToTenth(item.temp_avg);
-        const min = roundToTenth(item.temp_min);
-        const max = roundToTenth(item.temp_max);
-        return {
-          ...item,
-          temp_avg: avg ?? item.temp_avg,
-          temp_min: min ?? item.temp_min,
-          temp_max: max ?? item.temp_max,
-        };
-      });
-      setItems(attachForecastDate(normalised));
-    });
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const [forecastData, nowData] = await Promise.all([
+          apiPost<Item[]>("/forecast_detailed").catch(() => []),
+          apiGet<NowResponse>("/now").catch(() => null),
+        ]);
+
+        if (cancelled) return;
+
+        const normalised = (forecastData ?? []).map(item => {
+          const avg = roundToTenth(item.temp_avg);
+          const min = roundToTenth(item.temp_min);
+          const max = roundToTenth(item.temp_max);
+          return {
+            ...item,
+            temp_avg: avg ?? item.temp_avg,
+            temp_min: min ?? item.temp_min,
+            temp_max: max ?? item.temp_max,
+          };
+        });
+        setItems(attachForecastDate(normalised));
+
+        const liveTemp = typeof nowData?.temperature === "number" ? nowData.temperature : typeof nowData?.feels_like === "number" ? nowData.feels_like : null;
+        setCurrentTemp(liveTemp ?? null);
+      } catch (error) {
+        console.error("Failed to load forecast data", error);
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const yDomain = useMemo<[number, number]>(() => {
+    if (!items.length) return [20, 40];
+    const temps = items.map(item => item.temp_avg);
+    const min = Math.min(...temps);
+    const max = Math.max(...temps);
+    const paddedMin = Math.floor(min - 2);
+    const paddedMax = Math.ceil(max + 2);
+    return [paddedMin, paddedMax > paddedMin ? paddedMax : paddedMin + 4];
+  }, [items]);
+
+  const yTicks = useMemo<number[]>(() => {
+    const [min, max] = yDomain;
+    const steps = 3;
+    if (max <= min) return [min];
+    const interval = (max - min) / steps;
+    return Array.from({ length: steps + 1 }, (_, index) => Number((min + interval * index).toFixed(1)));
+  }, [yDomain]);
+
+  const renderXTicks = (props: any): JSX.Element => {
+    const { x, y, payload } = props;
+    if (typeof x !== "number" || typeof y !== "number" || !payload) return <></>;
+    const index: number | undefined = typeof payload.index === "number" ? payload.index : undefined;
+    const isActive = index !== undefined && activeIndex === index;
+    return (
+      <text
+        x={x}
+        y={y + 16}
+        textAnchor="middle"
+        fill={isActive ? "#1d4ed8" : "#6B7280"}
+        fontSize={13}
+        fontWeight={isActive ? 600 : 500}
+      >
+        {payload.value}
+      </text>
+    );
+  };
+
+  const renderDot = (props: any): JSX.Element => {
+    const { cx, cy } = props;
+    if (typeof cx !== "number" || typeof cy !== "number") return <></>;
+    return (
+      <g>
+        <circle
+          cx={cx}
+          cy={cy}
+          r={7}
+          fill="#2563eb"
+          stroke="#ffffff"
+          strokeWidth={2}
+          style={{ filter: "drop-shadow(0 2px 6px rgba(37,99,235,0.35))" }}
+        />
+      </g>
+    );
+  };
+
+  const renderActiveDot = (props: any): JSX.Element => {
+    const { cx, cy } = props;
+    if (typeof cx !== "number" || typeof cy !== "number") return <></>;
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r={12} fill="rgba(37,99,235,0.15)" />
+        <circle
+          cx={cx}
+          cy={cy}
+          r={9}
+          fill="#2563eb"
+          stroke="#ffffff"
+          strokeWidth={2}
+          style={{ filter: "drop-shadow(0 3px 8px rgba(37,99,235,0.35))" }}
+        />
+      </g>
+    );
+  };
+
+  const renderTooltip = ({ active, label, payload }: TooltipProps<number, string>): JSX.Element | null => {
+    if (!active || !payload || payload.length === 0) return null;
+    const first = payload[0];
+    const numeric = typeof first.value === "number" ? first.value : Number(first.value ?? 0);
+    const title = formatDayLabel(String(label ?? ""));
+    return (
+      <div
+        style={{
+          backgroundColor: "#ffffff",
+          border: "1px solid #e0e0e0",
+          borderRadius: "12px",
+          boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
+          padding: "12px 16px",
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: "6px", color: "#1f2937" }}>{title}</div>
+        <div style={{ color: "#475569", fontWeight: 500 }}>{`Average temperature ${formatTemperature(numeric)}`}</div>
+      </div>
+    );
+  };
 
   return (
     <Card className="shadow-md h-full">
       <CardHeader>
         <CardTitle>The Week Ahead</CardTitle>
-        <p className="text-sm text-muted-foreground">5-Day Forecast</p>
+        <p className="text-sm text-muted-foreground">Average daytime temperature across the next five days</p>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={items} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <ComposedChart
+              data={items}
+              margin={{ top: 16, right: 16, left: 16, bottom: 8 }}
+              onMouseMove={state => {
+                if (state && typeof state.activeTooltipIndex === "number") {
+                  setActiveIndex(state.activeTooltipIndex);
+                }
+              }}
+              onMouseLeave={() => setActiveIndex(null)}
+            >
               <defs>
-                <linearGradient id="tempRange" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#007BFF" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="#007BFF" stopOpacity={0.05} />
+                <linearGradient id="tempLineGradient" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#93c5fd" />
+                  <stop offset="50%" stopColor="#3b82f6" />
+                  <stop offset="100%" stopColor="#1d4ed8" />
+                </linearGradient>
+                <linearGradient id="tempAreaGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="rgba(59,130,246,0.15)" />
+                  <stop offset="100%" stopColor="rgba(59,130,246,0.02)" />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" vertical={false} />
-              <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: '#6c757d', fontSize: 14 }} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6c757d', fontSize: 14 }} label={{ value: 'Temperature (°C)', angle: -90, position: 'insideLeft', style: { fill: '#6c757d' } }} domain={[20, 40]} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e0e0e0', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}
-                formatter={(value: any) => {
-                  const numeric = typeof value === "number" ? value : Number(value);
-                  return [formatTemperature(numeric), ''];
-                }}
-                labelStyle={{ fontWeight: 600, marginBottom: 4 }}
+              <CartesianGrid strokeDasharray="3 6" stroke="#E5E7EB" vertical={false} />
+              <XAxis dataKey="day" axisLine={false} tickLine={false} tick={renderXTicks} interval={0} />
+              <YAxis
+                axisLine={false}
+                tickLine={false}
+                tick={{ fill: "#64748b", fontSize: 13 }}
+                domain={yDomain}
+                ticks={yTicks}
+                width={44}
+                tickMargin={10}
               />
-              <Line type="monotone" dataKey="temp_avg" stroke="#007BFF" strokeWidth={3} dot={{ fill: '#007BFF', r: 6, strokeWidth: 2, stroke: '#ffffff' }} activeDot={{ r: 8 }} />
+              <Tooltip content={renderTooltip} cursor={{ stroke: "#93c5fd", strokeDasharray: "4 4" }} />
+              <Line
+                type="monotone"
+                dataKey="temp_avg"
+                stroke="url(#tempLineGradient)"
+                strokeWidth={2.5}
+                dot={renderDot}
+                activeDot={renderActiveDot}
+                strokeLinecap="round"
+                isAnimationActive={false}
+              />
+              <Area
+                type="monotone"
+                dataKey="temp_avg"
+                stroke="none"
+                fill="url(#tempAreaGradient)"
+                isAnimationActive={false}
+              />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
         <div className="space-y-3">
           <h4 className="text-sm text-muted-foreground">Daily Temperature Outlook</h4>
-          <div className="space-y-3">
+          <div className="flex flex-col gap-3">
             {items.map((day, index) => {
               const prev = index > 0 ? items[index - 1] : null;
-              const deltaRaw = prev ? roundToTenth(day.temp_avg - prev.temp_avg) : null;
-              const deltaLabel = deltaRaw === null ? "Start" : `${deltaRaw > 0 ? "+" : ""}${deltaRaw.toFixed(1)}°C`;
-              const deltaCaption = prev ? "vs previous day" : "starting point";
+              const baselineDelta = !prev && currentTemp !== null ? roundToTenth(day.temp_avg - currentTemp) : null;
+              const deltaRaw = prev ? roundToTenth(day.temp_avg - prev.temp_avg) : baselineDelta;
+              const deltaLabel = deltaRaw === null ? (prev ? "—" : "Start") : `${deltaRaw > 0 ? "+" : ""}${deltaRaw.toFixed(1)}°C`;
+              const deltaCaption = prev ? "vs previous day" : currentTemp !== null ? "vs right now" : "starting point";
               const tone = temperatureTone(day.temp_avg);
+              const isOpen = openIndex === index;
+              const deltaBadgeTone =
+                deltaRaw === null || deltaRaw === 0
+                  ? "forecast-card__delta forecast-card__delta--neutral"
+                  : deltaRaw > 0
+                  ? "forecast-card__delta forecast-card__delta--warm"
+                  : "forecast-card__delta forecast-card__delta--cool";
+              const deltaBadgeLabel =
+                deltaRaw === null ? deltaCaption : `${deltaRaw > 0 ? "Warmer" : deltaRaw < 0 ? "Cooler" : "No change"}`;
+              const deltaCaptionShort =
+                deltaCaption === "vs previous day"
+                  ? "vs prev"
+                  : deltaCaption === "vs right now"
+                  ? "vs now"
+                  : "baseline";
               return (
-                <div key={day.day} className="p-4 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors space-y-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex-shrink-0 text-primary">{getWeatherIcon(day.condition)}</div>
-                      <div className="min-w-0">
-                        <div className="text-3xl font-semibold tracking-tight text-slate-900">{formatDayLabel(day.day)}</div>
-                        {day.displayDate ? (
-                          <div className="text-sm font-medium text-slate-600">{day.displayDate}</div>
-                        ) : null}
-                        <div className="text-xs font-semibold text-muted-foreground truncate">{temperatureTagline(day.temp_avg)}</div>
+                <article key={day.day} className="forecast-card">
+                  <button
+                    type="button"
+                    className="forecast-card__trigger"
+                    aria-expanded={isOpen}
+                    onClick={() => setOpenIndex(prevIndex => (prevIndex === index ? null : index))}
+                  >
+                    <div className="forecast-card__left">
+                      <div className="forecast-card__icon text-sky-500">{getWeatherIcon(day.condition)}</div>
+                      <div className="forecast-card__text">
+                        <span className="forecast-card__day">{formatDayLabel(day.day)}</span>
+                        {day.displayDate ? <span className="forecast-card__date">{day.displayDate}</span> : null}
                       </div>
                     </div>
-                    <div
-                      className="relative overflow-hidden rounded-xl border border-white/20 px-4 py-2 text-right shadow-xl ring-1 ring-white/20 transition-all duration-200 hover:-translate-y-0.5"
-                      style={{ backgroundImage: tone.gradient, boxShadow: tone.shadow }}
-                    >
-                      <span className={`text-3xl font-mono leading-none drop-shadow-sm ${tone.textClass}`}>{formatTemperature(day.temp_avg)}</span>
-                      <div className={`text-[11px] font-semibold tracking-wide uppercase ${tone.textClass} opacity-80`}>avg temp</div>
+                    <div className="forecast-card__meta">
+                      <div className={deltaBadgeTone}
+                        >
+                        <span className="forecast-card__delta-main">
+                          {trendIcon(deltaRaw)}
+                          <span>{deltaLabel}</span>
+                          <span className="forecast-card__delta-note">{deltaCaptionShort}</span>
+                        </span>
+                        <span className="forecast-card__delta-note">
+                          {deltaCaption === "starting point" ? "Baseline" : deltaBadgeLabel}
+                        </span>
+                      </div>
+                      <div
+                        className="forecast-card__temp-chip"
+                        style={{ backgroundImage: tone.gradient, boxShadow: tone.shadow }}
+                      >
+                        <span className={`forecast-card__temp-value ${tone.textClass}`}>{formatTemperature(day.temp_avg)}</span>
+                        <span className={`forecast-card__temp-label ${tone.textClass}`}>avg temp</span>
+                      </div>
+                      <ChevronDown
+                        className={`forecast-card__chevron ${isOpen ? "rotate-180" : ""}`}
+                      />
                     </div>
-                  </div>
-                  <div className="text-sm text-muted-foreground leading-relaxed">{describeTemperature(day.temp_avg)}</div>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                      {trendIcon(deltaRaw)}
-                      <span className="font-mono text-sm">{deltaLabel}</span>
-                      <span>{deltaCaption}</span>
+                  </button>
+                  {isOpen ? (
+                    <div className="forecast-card__details">
+                      <div className="forecast-card__details-header">{temperatureTagline(day.temp_avg)}</div>
+                      <p>{describeTemperature(day.temp_avg)}</p>
+                      <div className="forecast-card__details-footer">
+                        <span>{actionHint(day.temp_avg)}</span>
+                        <button type="button" className="forecast-card__details-link">View deep dive</button>
+                      </div>
                     </div>
-                    <span className="text-xs font-semibold text-primary/80">{actionHint(day.temp_avg)}</span>
-                  </div>
-                </div>
+                  ) : null}
+                </article>
               );
             })}
           </div>
