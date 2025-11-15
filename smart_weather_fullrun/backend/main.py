@@ -73,7 +73,13 @@ def _read_csv_safe(path: str) -> pd.DataFrame:
     df = pd.read_csv(path)
     for c in ["datetime", "sunrise", "sunset"]:
         if c in df.columns:
-            df[c] = pd.to_datetime(df[c], errors="coerce")
+            try:
+                df[c] = pd.to_datetime(df[c], errors="coerce", format="mixed")
+            except TypeError:
+                # Older pandas versions lack format="mixed"; normalise ISO "T" separator manually.
+                if df[c].dtype == object:
+                    df[c] = df[c].astype(str).str.replace("T", " ", regex=False)
+                df[c] = pd.to_datetime(df[c], errors="coerce")
     return df
 
 def get_daily_df() -> pd.DataFrame:

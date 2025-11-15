@@ -1,9 +1,9 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
-import { CurrentConditions } from "./components/CurrentConditions";
 import { ForecastChart } from "./components/ForecastChart";
 import { ForecastDeepDive } from "./components/ForecastDeepDive";
 import { HistoricalExplorer } from "./components/HistoricalExplorer";
 import { About } from "./components/About";
+import { QuickForecastSummary } from "./components/QuickForecastSummary";
 
 export default function App() {
   return (
@@ -45,7 +45,7 @@ export default function App() {
             <div className="grid grid-cols-1 lg:grid-cols-[35%_65%] gap-6">
               {/* Left Column - Current Conditions (35%) */}
               <div>
-                <CurrentConditions />
+                <QuickForecastSummary />
               </div>
 
               {/* Right Column - 5-Day Forecast (65%) */}
