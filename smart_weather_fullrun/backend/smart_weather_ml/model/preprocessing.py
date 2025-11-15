@@ -15,7 +15,7 @@ def basic_cleaning(data: pd.DataFrame) -> pd.DataFrame:
 
 def split_data(data: pd.DataFrame):
     n = len(data)
-    n_train = int(n * 0.85)
+    n_train = int(n * 0.8)
     train_data = data.iloc[:n_train]
     test_data  = data.iloc[n_train:]
     X_train = train_data.drop(["temp"], axis=1)
@@ -135,3 +135,4 @@ class Preprocessor(BaseEstimator, TransformerMixin):
         clean = pd.concat([datetime_values, temp_df, categorical_data], axis=1)
 
         return clean
+
