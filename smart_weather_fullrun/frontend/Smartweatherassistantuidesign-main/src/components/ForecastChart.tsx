@@ -12,7 +12,6 @@ import {
   type TooltipProps,
 } from "recharts";
 import {
-  Lightbulb,
   CloudRain,
   CloudSun,
   Cloud,
@@ -22,6 +21,7 @@ import {
   ArrowUpRight,
   Minus,
   ChevronDown,
+  CalendarDays,
 } from "lucide-react";
 import { apiGet, apiPost } from "../lib/api";
 import { formatTemperature, roundToTenth } from "../lib/format";
@@ -86,42 +86,6 @@ const attachForecastDate = (list: Item[]): Item[] => {
   });
 };
 
-const temperatureTone = (temp: number) => {
-  if (temp >= 35) {
-    return {
-      gradient: "linear-gradient(135deg,#f97316 0%,#ef4444 45%,#b91c1c 100%)",
-      textClass: "text-white",
-      shadow: "0 18px 36px rgba(239,68,68,0.4)",
-    };
-  }
-  if (temp >= 32) {
-    return {
-      gradient: "linear-gradient(135deg,#f59e0b 0%,#f97316 50%,#ea580c 100%)",
-      textClass: "text-white",
-      shadow: "0 18px 32px rgba(245,158,11,0.35)",
-    };
-  }
-  if (temp >= 29) {
-    return {
-      gradient: "linear-gradient(135deg,#fbbf24 0%,#facc15 45%,#22c55e 100%)",
-      textClass: "text-slate-900",
-      shadow: "0 16px 28px rgba(250,204,21,0.35)",
-    };
-  }
-  if (temp >= 26) {
-    return {
-      gradient: "linear-gradient(135deg,#34d399 0%,#14b8a6 45%,#38bdf8 100%)",
-      textClass: "text-white",
-      shadow: "0 16px 28px rgba(45,212,191,0.35)",
-    };
-  }
-  return {
-    gradient: "linear-gradient(135deg,#22d3ee 0%,#2563eb 45%,#312e81 100%)",
-    textClass: "text-white",
-    shadow: "0 18px 32px rgba(59,130,246,0.35)",
-  };
-};
-
 const temperatureTagline = (temp: number): string => {
   if (temp >= 35) return "Heatwave alert";
   if (temp >= 32) return "Sweltering stretch";
@@ -146,11 +110,20 @@ const actionHint = (temp: number): string => {
   return "Plan: grab that lightweight jacket.";
 };
 
+const resolveForecastCardTheme = (condition?: string): string => {
+  if (!condition) return "forecast-card--theme-day-cloud";
+  const lowered = condition.toLowerCase();
+  if (lowered.includes("storm") || lowered.includes("thunder")) return "forecast-card--theme-day-storm";
+  if (lowered.includes("rain") || lowered.includes("drizzle") || lowered.includes("shower")) return "forecast-card--theme-day-rain";
+  if (lowered.includes("sun") || lowered.includes("clear")) return "forecast-card--theme-day-clear";
+  return "forecast-card--theme-day-cloud";
+};
+
 const trendIcon = (delta: number | null) => {
-  if (delta === null) return <Minus className="w-4 h-4 text-muted-foreground" />;
-  if (delta > 0.05) return <ArrowUpRight className="w-4 h-4 text-red-500" />;
-  if (delta < -0.05) return <ArrowDownRight className="w-4 h-4 text-blue-500" />;
-  return <Minus className="w-4 h-4 text-muted-foreground" />;
+  if (delta === null) return <Minus className="w-4 h-4" />;
+  if (delta > 0.05) return <ArrowUpRight className="w-4 h-4" />;
+  if (delta < -0.05) return <ArrowDownRight className="w-4 h-4" />;
+  return <Minus className="w-4 h-4" />;
 };
 
 export function ForecastChart() {
@@ -293,10 +266,13 @@ export function ForecastChart() {
   };
 
   return (
-    <Card className="shadow-md h-full">
-      <CardHeader>
-        <CardTitle>The Week Ahead</CardTitle>
-        <p className="text-sm text-muted-foreground">Average daytime temperature across the next five days</p>
+    <Card className="forecast-chart shadow-md h-full">
+      <CardHeader className="forecast-chart__header">
+        <div className="forecast-chart__title-row">
+          <CalendarDays className="forecast-chart__title-icon" />
+          <CardTitle className="forecast-chart__title">The Week Ahead</CardTitle>
+        </div>
+        <p className="forecast-chart__subtitle">Average daytime temperature across the next five days</p>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="h-64">
@@ -355,7 +331,7 @@ export function ForecastChart() {
           </ResponsiveContainer>
         </div>
         <div className="space-y-3">
-          <h4 className="text-sm text-muted-foreground">Daily Temperature Outlook</h4>
+          <h4 className="forecast-chart__section-heading">Daily Temperature Outlook</h4>
           <div className="flex flex-col gap-3">
             {items.map((day, index) => {
               const prev = index > 0 ? items[index - 1] : null;
@@ -363,14 +339,12 @@ export function ForecastChart() {
               const deltaRaw = prev ? roundToTenth(day.temp_avg - prev.temp_avg) : baselineDelta;
               const deltaLabel = deltaRaw === null ? (prev ? "—" : "Start") : `${deltaRaw > 0 ? "+" : ""}${deltaRaw.toFixed(1)}°C`;
               const deltaCaption = prev ? "vs previous day" : currentTemp !== null ? "vs right now" : "starting point";
-              const tone = temperatureTone(day.temp_avg);
               const isOpen = openIndex === index;
-              const deltaBadgeTone =
-                deltaRaw === null || deltaRaw === 0
-                  ? "forecast-card__delta forecast-card__delta--neutral"
-                  : deltaRaw > 0
-                  ? "forecast-card__delta forecast-card__delta--warm"
-                  : "forecast-card__delta forecast-card__delta--cool";
+              const deltaVariant =
+                deltaRaw === null || deltaRaw === 0 ? "neutral" : deltaRaw > 0 ? "warm" : "cool";
+              const deltaBlockClass = `forecast-card__delta-block forecast-card__delta-block--${deltaVariant}`;
+              const deltaPillClass = `forecast-card__delta-pill forecast-card__delta-pill--${deltaVariant}`;
+              const deltaToneClass = `forecast-card--delta-${deltaVariant}`;
               const deltaBadgeLabel =
                 deltaRaw === null ? deltaCaption : `${deltaRaw > 0 ? "Warmer" : deltaRaw < 0 ? "Cooler" : "No change"}`;
               const deltaCaptionShort =
@@ -379,8 +353,12 @@ export function ForecastChart() {
                   : deltaCaption === "vs right now"
                   ? "vs now"
                   : "baseline";
+              const forecastThemeClass = resolveForecastCardTheme(day.condition);
               return (
-                <article key={day.day} className="forecast-card">
+                <article
+                  key={day.day}
+                  className={["forecast-card", forecastThemeClass, deltaToneClass].filter(Boolean).join(" ")}
+                >
                   <button
                     type="button"
                     className="forecast-card__trigger"
@@ -395,23 +373,19 @@ export function ForecastChart() {
                       </div>
                     </div>
                     <div className="forecast-card__meta">
-                      <div className={deltaBadgeTone}
-                        >
+                      <div className={deltaBlockClass}>
                         <span className="forecast-card__delta-main">
                           {trendIcon(deltaRaw)}
                           <span>{deltaLabel}</span>
-                          <span className="forecast-card__delta-note">{deltaCaptionShort}</span>
+                          <span className="forecast-card__delta-caption">{deltaCaptionShort}</span>
                         </span>
-                        <span className="forecast-card__delta-note">
+                        <span className={deltaPillClass}>
                           {deltaCaption === "starting point" ? "Baseline" : deltaBadgeLabel}
                         </span>
                       </div>
-                      <div
-                        className="forecast-card__temp-chip"
-                        style={{ backgroundImage: tone.gradient, boxShadow: tone.shadow }}
-                      >
-                        <span className={`forecast-card__temp-value ${tone.textClass}`}>{formatTemperature(day.temp_avg)}</span>
-                        <span className={`forecast-card__temp-label ${tone.textClass}`}>avg temp</span>
+                      <div className="forecast-card__temp-chip">
+                        <span className="forecast-card__temp-value">{formatTemperature(day.temp_avg)}</span>
+                        <span className="forecast-card__temp-label">avg temp</span>
                       </div>
                       <ChevronDown
                         className={`forecast-card__chevron ${isOpen ? "rotate-180" : ""}`}
@@ -424,24 +398,12 @@ export function ForecastChart() {
                       <p>{describeTemperature(day.temp_avg)}</p>
                       <div className="forecast-card__details-footer">
                         <span>{actionHint(day.temp_avg)}</span>
-                        <button type="button" className="forecast-card__details-link">View deep dive</button>
                       </div>
                     </div>
                   ) : null}
                 </article>
               );
             })}
-          </div>
-        </div>
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex gap-3">
-            <Lightbulb className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <h4 className="text-blue-900 mb-1">Smart Insight</h4>
-              <p className="text-sm text-blue-800">
-                Forecast powered by your local ML backend. Confidence improves when ONNX models are available in the server.
-              </p>
-            </div>
           </div>
         </div>
       </CardContent>
