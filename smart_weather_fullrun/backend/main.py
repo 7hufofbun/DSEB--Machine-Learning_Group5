@@ -5,13 +5,12 @@ import json
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
-
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from smart_weather_ml.model.preprocessing import Preprocessor
+from smart_weather_ml.model.preprocessing import Preprocessor, basic_cleaning
 from smart_weather_ml.model.features import feature_engineer
 
 try:
@@ -283,7 +282,7 @@ def forecast_detailed() -> List[Dict[str, Any]]:
              "condition": "Partly Cloudy", "precipChance": 20}
             for i in range(1, 6)
         ]
-
+    d = basic_cleaning(d)
     d = d.sort_values("datetime").reset_index(drop=True)
 
     if ONNX.loaded and "temp" in d.columns and "datetime" in d.columns:
