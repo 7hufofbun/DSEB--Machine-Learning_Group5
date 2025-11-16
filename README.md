@@ -15,7 +15,6 @@ _(Quick summary: a project that forecasts and explains Ho Chi Minh City temperat
 
 ## 1) Folder structure
 
-```text
 smart_weather_full_project_fullrun/
 ├─ backend/
 │  ├─ main.py
