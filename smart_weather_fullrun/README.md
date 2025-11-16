@@ -1,4 +1,4 @@
-# Smart Weather — Full Stack Pack (Unzip & Run)
+# Smart Weather — Full Stack Pack 
 
 ## Tổng quan dự án
 
