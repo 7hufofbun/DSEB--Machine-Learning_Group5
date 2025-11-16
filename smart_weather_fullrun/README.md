@@ -1,6 +1,15 @@
 # Smart Weather — Full Stack Pack (Unzip & Run)
 
 > Bộ này gộp **backend (FastAPI + ML)** và **frontend (React + Vite)**. 
+---
+
+## Project overview
+
+Smart Weather is a small end-to-end project that predicts temperature for **Ho Chi Minh City** and explains *why* a day is warmer or cooler than usual.
+
+- On the **ML side**, we train LightGBM time-series models on historical weather data (daily + hourly), export them to **ONNX**, and serve them via a **FastAPI** backend. The backend also exposes handy endpoints for “current conditions”, multi-day forecasts, and historical stats.
+- On the **product side**, a **React + Vite** frontend turns those predictions into a friendly, explainer-style UI: summary cards (“How today compares”), key drivers (“What’s driving today’s temperature”), and charts that show how each factor nudges the temperature up or down.
+- Everything in this pack is wired together so you can **unzip, run backend + frontend, and get a working Smart Weather assistant locally**.
 
 ---
 
