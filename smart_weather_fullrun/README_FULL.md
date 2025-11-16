@@ -69,7 +69,6 @@ Kiểm tra: mở trình duyệt tới `http://127.0.0.1:8000/health` → thấy 
   uvicorn main:app --reload --port 8000
   ```
 
-- Cột tối thiểu nên có: `datetime,temp,tempmin,tempmax,humidity,cloudcover,solarradiation,windspeed` (hệ thống có map tên cột phổ biến).
 
 ### Dùng mô hình ONNX (nếu có)
 
