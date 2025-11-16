@@ -1,6 +1,6 @@
 # Smart Weather — Full Stack Pack (Unzip & Run)
 
-> Bộ này gộp **backend (FastAPI + ML)** và **frontend (React + Vite)**. Mục tiêu: **giải nén là chạy** cho người mới bắt đầu.
+> Bộ này gộp **backend (FastAPI + ML)** và **frontend (React + Vite)**. 
 
 ---
 
@@ -15,8 +15,8 @@ smart_weather_full_project_fullrun/
 │  │  ├─ weather_hcm_daily.csv
 │  │  └─ weather_hcm_hourly.csv
 │  ├─ models_onnx/
-│  │  └─ temp_t+{1..5}.onnx           (tùy chọn; nếu có sẽ dùng mô hình)
-│  └─ smart_weather_ml/               (mã ML để train & export ONNX – tùy chọn)
+│  │  └─ temp_t+{1..5}.onnx           
+│  └─ smart_weather_ml/               (mã ML để train & export ONNX )
 │     ├─ __init__.py
 │     ├─ io.py, utils.py
 │     ├─ preprocessing.py, features.py
@@ -30,7 +30,7 @@ smart_weather_full_project_fullrun/
 │     ├─ .env.local                   (đã trỏ: VITE_API_BASE=http://localhost:8000)
 │     └─ src/
 │        ├─ lib/api.ts                (helper gọi API)
-│        └─ (các component UI của bạn – đã gắn API)
+│        └─ (các component UI  – đã gắn API)
 ├─ scripts/
 │  ├─ setup_backend.ps1               (tạo venv, cài dep, chạy server)
 │  └─ fix_frontend_imports.ps1        (sửa import @version & cài các UI deps)
@@ -44,7 +44,6 @@ smart_weather_full_project_fullrun/
 - **Windows + PowerShell**
 - **Python 3.10+** (khuyên dùng)
 - **Node.js LTS** (18 hoặc 20), npm đi kèm
-- (Tuỳ chọn) **Git LFS** nếu bạn định push file `.onnx`/`.csv` lớn lên GitHub
 
 ---
 
@@ -91,7 +90,7 @@ Kiểm tra: mở trình duyệt tới `http://127.0.0.1:8000/health` → thấy 
 ## 4) Chạy Frontend (React + Vite)
 
 ```powershell
-cd D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\frontend\Smartweatherassistantuidesign-main
+cd [Folder link path](VD: D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\frontend\Smartweatherassistantuidesign-main)
 # Lần đầu cài đặt: Sửa import UI kiểu @radix-ui/...@version và cài deps
 powershell -ExecutionPolicy Bypass -File ..\..\scripts\fix_frontend_imports.ps1
 
