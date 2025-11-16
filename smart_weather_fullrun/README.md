@@ -3,8 +3,6 @@
 > Bộ này gộp **backend (FastAPI + ML)** và **frontend (React + Vite)**. 
 ---
 
----
-
 ## Tổng quan dự án
 
 Smart Weather là một dự án end-to-end gọn nhẹ dùng để dự báo nhiệt độ cho **TP. Hồ Chí Minh** và giải thích *vì sao* một ngày lại nóng hơn hoặc mát hơn bình thường.
