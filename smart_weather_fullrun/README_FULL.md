@@ -110,7 +110,6 @@ Mở URL Vite hiển thị (thường là `http://localhost:5173`).
 - **Current Conditions** → gọi `GET /now`
 - **The Week Ahead** → gọi `POST /forecast_detailed`
 - **Historical Explorer** → gọi `GET /history`
-- **Deep Dive** → có sẵn khung, có thể nối `/explain` nếu cần
 
 ---
 
@@ -147,18 +146,3 @@ python -m smart_weather_ml.train
 
 ---
 
-## 7) Gợi ý “clone là chạy” trên máy khác
-
-1. Clone/paste toàn bộ **`smart_weather_full_project_fullrun/`** vào máy mới.  
-2. Làm theo mục **3) Chạy Backend** → mở `/health`.  
-3. Làm theo mục **4) Chạy Frontend** → mở UI.  
-4. Nếu cần data/model thật → xem mục 3 (Tuỳ chỉnh dữ liệu thật) & 6 (Train & Export).
-
----
-
-## 8) Giấy phép & ghi công
-
-- UI bạn cung cấp đã được giữ nguyên style và layout, chỉ **gắn API** và thêm `src/lib/api.ts`.  
-- Backend sử dụng FastAPI, LightGBM, ONNX Runtime; bản quyền theo giấy phép của từng thư viện.
-
-Chúc bạn chạy mượt! 🚀
