@@ -101,7 +101,7 @@ Kiểm tra: mở trình duyệt tới `http://127.0.0.1:8000/health` → thấy 
 ## 4) Chạy Frontend (React + Vite)
 
 ```powershell
-cd [Folder link path](VD: D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\frontend\Smartweatherassistantuidesign-main)
+cd D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\frontend\Smartweatherassistantuidesign-main
 # Lần đầu cài đặt: Sửa import UI kiểu @radix-ui/...@version và cài deps
 powershell -ExecutionPolicy Bypass -File ..\..\scripts\fix_frontend_imports.ps1
 
