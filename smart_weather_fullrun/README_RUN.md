@@ -1,8 +1,10 @@
-# 1) Backend (FastAPI)
+# Run Instructions
+
+## Backend (FastAPI)
 
 **Thư mục dự án backend:**
 
-```
+```text
 D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\backend\smart_weather_ml
 
 ```
@@ -22,7 +24,8 @@ pip install -r requirements.txt
 
 # (Tuỳ chọn) 3) Train lại & export ONNX nếu thư mục models_onnx đang rỗng
 #   → chạy lệnh sau sẽ tự train + export .onnx
-python -m smart_weather_ml.model.train --save_dir models_onnx --overwrite
+# python -m smart_weather_ml.model.train --save_dir models_onnx --overwrite
+
 
 # Kiểm tra đã có model ONNX chưa
 Get-ChildItem .\models_onnx\*.onnx | Select Name,Length,LastWriteTime
@@ -34,7 +37,7 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 
 **Kỳ vọng log OK (ví dụ):**
 
-```
+```text
 INFO:     Uvicorn running on http://127.0.0.1:8000
 INFO:     Application startup complete.
 
@@ -42,19 +45,18 @@ INFO:     Application startup complete.
 
 **Test nhanh:**
 
-- Sức khoẻ: http://127.0.0.1:8000/health → `{"status":"ok"}`
-- OpenAPI: http://127.0.0.1:8000/docs
+- Sức khoẻ: <http://127.0.0.1:8000/health> → `{"status":"ok"}`
+- OpenAPI: <http://127.0.0.1:8000/docs>
 
 > ⚠️ Nếu thấy lỗi “Could not import module 'main'”, gần như bạn đang không đứng trong thư mục backend. Hãy cd đúng đường dẫn ở trên rồi chạy lại uvicorn main:app --reload.
-> 
 
 ---
 
-# 2) Frontend (Vite + React)
+## Frontend (Vite + React)
 
 **Thư mục frontend:**
 
-```
+```text
 D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\frontend
 
 ```
@@ -85,25 +87,23 @@ npm run dev
 
 **Kỳ vọng:** Vite báo địa chỉ như:
 
-```
+```text
 Local:   http://localhost:5173/
 
 ```
 
-Mở trình duyệt vào `http://localhost:5173/`.
+Mở trình duyệt vào `<http://localhost:5173/>`.
 
-Frontend sẽ gọi API tới `http://127.0.0.1:8000` (nhờ `.env.local`).
+Frontend sẽ gọi API tới `<http://127.0.0.1:8000>` (nhờ `.env.local`).
 
 ---
 
-## Ghi chú quan trọng
+### Ghi chú quan trọng
 
 - **Thứ tự chạy:** Luôn bật **backend trước**, rồi mới **frontend**.
 - **CORS:** Backend đã cấu hình CORS cho `http://localhost:5173`. Nếu bạn đổi port/frontend origin khác, thêm vào `allow_origins` trong `main.py`.
 - **Model ONNX:** Nếu `models_onnx` đã có file `.onnx`, **không cần** train lại. Chỉ train khi bạn muốn cập nhật model.
-- **Port đang bận:**
-    - Backend (8000) bận → đổi `-port 8001` hoặc tắt tiến trình chiếm port.
-    - Frontend (5173) bận → Vite sẽ hỏi đổi port; chọn yes.
+- **Port đang bận:** Backend (8000) bận → đổi `-port 8001` hoặc tắt tiến trình chiếm port; frontend (5173) bận → Vite sẽ hỏi đổi port, hãy chọn yes.
 - **Lỗi mạng npm (ECONNRESET/E404)** → giữ mirror `npmmirror`, thử `npm cache clean --force`, rồi `npm install` lại.
 - **‘vite’ không nhận** → `npm i -D vite` hoặc dùng `npx vite`.
 - **Kiểm tra nhanh endpoint từ PowerShell:**
@@ -117,7 +117,7 @@ Frontend sẽ gọi API tới `http://127.0.0.1:8000` (nhờ `.env.local`).
 
 ---
 
-## Tóm tắt lệnh “chạy ngay”
+### Tóm tắt lệnh “chạy ngay”
 
 **Backend (cửa sổ 1):**
 

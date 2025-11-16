@@ -1,0 +1,15 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "npm run dev --prefix Smartweatherassistantuidesign-main",
+    "build": "npm run build --prefix Smartweatherassistantuidesign-main",
+    "preview": "npm run preview --prefix Smartweatherassistantuidesign-main",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
