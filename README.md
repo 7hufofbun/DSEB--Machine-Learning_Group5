@@ -1,4 +1,3 @@
-````markdown
 # Smart Weather — Full Stack Pack 
 
 ## Project overview
