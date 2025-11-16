@@ -18,6 +18,7 @@ import {
   Wind,
 } from "lucide-react";
 import { apiGet, apiPost } from "../lib/api";
+import { formatTemperature, formatTemperatureValue } from "../lib/format";
 import "./TodayWeatherSummary.css";
 
 interface NowResponse {
@@ -580,21 +581,21 @@ export function TodayWeatherSummary({ weather, onDetailClick, isLoading }: Today
       <div className="today-card__hero">
         <div className="today-card__hero-left">
           <div className="today-card__temp" title="Current temperature">
-            <span className="today-card__temp-value">{Math.round(data.temp)}</span>
+            <span className="today-card__temp-value">{formatTemperatureValue(data.temp)}</span>
             <span className="today-card__temp-unit">°C</span>
           </div>
           <div className="today-card__feels" title="Apparent temperature">
             <Thermometer className="today-card__feels-icon" />
             <span>
-              Feels like {Math.round(data.feelslike)}°C
+              Feels like {formatTemperature(data.feelslike)}
             </span>
           </div>
           <div className="today-card__high-low">
-            <span>High {Math.round(data.tempmax)}°</span>
+            <span>High {formatTemperature(data.tempmax, { unit: "°" })}</span>
             <span className="today-card__high-low-separator" aria-hidden>
               •
             </span>
-            <span>Low {Math.round(data.tempmin)}°</span>
+            <span>Low {formatTemperature(data.tempmin, { unit: "°" })}</span>
           </div>
         </div>
         <div className="today-card__hero-icon" aria-hidden>

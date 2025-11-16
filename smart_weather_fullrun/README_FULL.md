@@ -51,7 +51,7 @@ smart_weather_full_project_fullrun/
 ## 3) Chạy Backend (FastAPI)
 
 ```powershell
-cd smart_weather_full_project_fullrun\backend
+cd D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\backend
 python -m venv .venv
 . .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -86,8 +86,7 @@ Kiểm tra: mở trình duyệt tới `http://127.0.0.1:8000/health` → thấy 
 ## 4) Chạy Frontend (React + Vite)
 
 ```powershell
-cd smart_weather_full_project_fullrun\frontend\Smartweatherassistantuidesign-main
-
+cd D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\frontend\Smartweatherassistantuidesign-main
 # Lần đầu cài đặt: Sửa import UI kiểu @radix-ui/...@version và cài deps
 powershell -ExecutionPolicy Bypass -File ..\..\scripts\fix_frontend_imports.ps1
 

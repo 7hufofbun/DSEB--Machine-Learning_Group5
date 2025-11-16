@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { apiGet, apiPost } from "../lib/api";
 import { format, parseISO } from "date-fns";
+import { formatTemperature } from "../lib/format";
 
 /* ---------------------------------------------
    TYPES
@@ -298,10 +299,10 @@ export default function CurrentConditions() {
         {/* Main Temp + Icon */}
         <div className="flex items-center justify-between gap-6">
           <div className="space-y-1">
-            <div className="text-6xl font-semibold">{Math.round(temp)}°C</div>
+            <div className="text-6xl font-semibold">{formatTemperature(temp)}</div>
             <div className="text-lg">{conditions}</div>
             <div className="text-sm text-white/80">
-              Feels like {Math.round(feelslike)}°C — {description}
+              Feels like {formatTemperature(feelslike)} — {description}
             </div>
           </div>
 
@@ -316,12 +317,12 @@ export default function CurrentConditions() {
           <GlassChip
             icon={<ThermometerSun className="h-5 w-5" />}
             label="Feels Like"
-            value={`${Math.round(feelslike)}°C`}
+            value={formatTemperature(feelslike)}
           />
           <GlassChip
             icon={<Sun className="h-5 w-5" />}
             label="High / Low"
-            value={`${Math.round(tempmax)}° / ${Math.round(tempmin)}°`}
+            value={`${formatTemperature(tempmax, { unit: "°" })} / ${formatTemperature(tempmin, { unit: "°" })}`}
           />
           <GlassChip
             icon={<Wind className="h-5 w-5" />}
