@@ -3,15 +3,20 @@
 > Bộ này gộp **backend (FastAPI + ML)** và **frontend (React + Vite)**. 
 ---
 
-## Project overview
+---
 
-Smart Weather is a small end-to-end project that predicts temperature for **Ho Chi Minh City** and explains *why* a day is warmer or cooler than usual.
+## Tổng quan dự án
 
-- On the **ML side**, we train LightGBM time-series models on historical weather data (daily + hourly), export them to **ONNX**, and serve them via a **FastAPI** backend. The backend also exposes handy endpoints for “current conditions”, multi-day forecasts, and historical stats.
-- On the **product side**, a **React + Vite** frontend turns those predictions into a friendly, explainer-style UI: summary cards (“How today compares”), key drivers (“What’s driving today’s temperature”), and charts that show how each factor nudges the temperature up or down.
-- Everything in this pack is wired together so you can **unzip, run backend + frontend, and get a working Smart Weather assistant locally**.
+Smart Weather là một dự án end-to-end gọn nhẹ dùng để dự báo nhiệt độ cho **TP. Hồ Chí Minh** và giải thích *vì sao* một ngày lại nóng hơn hoặc mát hơn bình thường.
+
+- Về **phía ML**, chúng em huấn luyện các mô hình chuỗi thời gian LightGBM trên dữ liệu thời tiết lịch sử (theo ngày + theo giờ), export sang chuẩn **ONNX**, và phục vụ qua backend **FastAPI**. Backend cũng cung cấp các endpoint tiện dụng cho “thời tiết hiện tại”, dự báo nhiều ngày và thống kê lịch sử.
+- Về **phía sản phẩm**, frontend **React + Vite** biến các dự báo đó thành một giao diện giải thích thân thiện: các thẻ tóm tắt (“How today compares”), các yếu tố chính (“What’s driving today’s temperature”), và biểu đồ cho thấy mỗi yếu tố đang đẩy nhiệt độ lên hay kéo xuống như thế nào.
+- Toàn bộ pack này đã được nối sẵn, nên bạn chỉ cần **giải nén, chạy backend + frontend là có ngay một Smart Weather assistant hoạt động trên máy local**.
+
+_(Tóm tắt nhanh: dự án dự báo và giải thích nhiệt độ TP.HCM, gồm đủ backend ML + frontend UI, chỉ cần unzip là chạy được.)_
 
 ---
+
 
 ## 1) Cấu trúc thư mục
 
