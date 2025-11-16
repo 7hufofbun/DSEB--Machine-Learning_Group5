@@ -286,6 +286,22 @@ class ModelRetrainingPipeline:
         # Add test metrics to pipeline
         pipeline['test_metrics'] = avg_metrics['test']
         pipeline['final_results'] = final_results
+
+        # Persist a lightweight metrics summary for the web UI
+        try:
+            import json
+            metrics_out = {
+                'train': avg_metrics.get('train', {}),
+                'test': avg_metrics.get('test', {}),
+                'per_target': final_results,
+                'evaluated_at': datetime.now().isoformat(),
+            }
+            metrics_path = os.path.join(self.backend_root, 'model_metrics.json')
+            with open(metrics_path, 'w', encoding='utf-8') as f:
+                json.dump(metrics_out, f, default=lambda o: o if isinstance(o, (int, float, str, type(None), dict, list)) else str(o))
+            print(f"Saved model metrics summary to {metrics_path}")
+        except Exception as e:
+            print(f"Warning: failed to persist model metrics summary: {e}")
         
         return pipeline, final_results, task
     

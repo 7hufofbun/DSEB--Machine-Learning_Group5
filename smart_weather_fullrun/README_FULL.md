@@ -6,7 +6,7 @@
 
 ## 1) Cấu trúc thư mục
 
-```
+```text
 smart_weather_full_project_fullrun/
 ├─ backend/
 │  ├─ main.py
@@ -61,19 +61,24 @@ uvicorn main:app --reload --port 8000
 Kiểm tra: mở trình duyệt tới `http://127.0.0.1:8000/health` → thấy `{ "ok": true, ... }` là ổn.
 
 ### Tuỳ chỉnh dữ liệu thật
+
 - Thay file trong `backend/data/` **hoặc** đặt biến môi trường trước khi chạy:
+
   ```powershell
   $env:WEATHER_DAILY_CSV="C:\path\to\your\weather_daily.csv"
   $env:WEATHER_HOURLY_CSV="C:\path\to\your\weather_hourly.csv"
   uvicorn main:app --reload --port 8000
   ```
+
 - Cột tối thiểu nên có: `datetime,temp,tempmin,tempmax,humidity,cloudcover,solarradiation,windspeed` (hệ thống có map tên cột phổ biến).
 
 ### Dùng mô hình ONNX (nếu có)
+
 - Đặt file `temp_t+1.onnx … temp_t+5.onnx` vào `backend/models_onnx/`.
 - Nếu **không có**, API sẽ dùng baseline theo thống kê.
 
 ### Các endpoint chính
+
 - `GET /health` – tình trạng server.
 - `GET /now` – điều kiện hiện tại (ưu tiên hourly; fallback sang daily).
 - `GET /history?start=YYYY-MM-DD&end=YYYY-MM-DD&group_by=daily|monthly|yearly`
@@ -94,13 +99,16 @@ powershell -ExecutionPolicy Bypass -File ..\..\scripts\fix_frontend_imports.ps1
 npm install
 npm run dev
 ```
+
 Mở URL Vite hiển thị (thường là `http://localhost:5173`).
 
-> **Ghi chú**  
-> - File `.env.local` đã có sẵn: `VITE_API_BASE=http://localhost:8000`.  
+> **Ghi chú**
+>
+> - File `.env.local` đã có sẵn: `VITE_API_BASE=http://localhost:8000`.
 > - Nếu mạng npm chậm: `npm config set registry https://registry.npmmirror.com/` rồi `npm install` lại.
 
 ### Các tab trong UI (đã nối API)
+
 - **Current Conditions** → gọi `GET /now`
 - **The Week Ahead** → gọi `POST /forecast_detailed`
 - **Historical Explorer** → gọi `GET /history`
@@ -131,9 +139,11 @@ Mở URL Vite hiển thị (thường là `http://localhost:5173`).
 ## 6) (Tuỳ chọn) Train & Export ONNX
 
 Trong `backend` (đã kích hoạt venv):
+
 ```powershell
 python -m smart_weather_ml.train
 ```
+
 - Pipeline sẽ train LightGBM cho các horizon và **export ONNX** vào `backend/models_onnx/`.
 - Khởi động lại backend để API dùng mô hình mới.
 

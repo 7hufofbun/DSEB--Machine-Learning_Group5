@@ -4,13 +4,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Label } from "./ui/label";
 import { Switch } from "./ui/switch";
 import { Button } from "./ui/button";
-import { Calendar } from "./ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   Area, ComposedChart, ScatterChart, Scatter, Brush, ReferenceArea, Cell
 } from "recharts";
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { format, addDays, differenceInDays } from "date-fns";
 import { apiGet } from "../lib/api";
 
@@ -42,8 +40,64 @@ export function HistoricalExplorer() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const [raw, setRaw] = useState<DayRow[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<any>(null);
+
   useEffect(() => {
-    apiGet<DayRow[]>(`/history?group_by=daily`).then(setRaw).catch(() => setRaw([]));
+    let cancelled = false;
+    const fetchData = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const start = dateFrom.toISOString().slice(0, 10);
+        const end = dateTo.toISOString().slice(0, 10);
+        const url = `/history?group_by=${encodeURIComponent(groupBy)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+        const data = await apiGet<DayRow[]>(url);
+        if (cancelled) return;
+        setRaw(Array.isArray(data) ? data : []);
+      } catch (err: any) {
+        if (cancelled) return;
+        setError(err?.message ?? String(err ?? "Failed to fetch history"));
+        setRaw([]);
+      } finally {
+        if (cancelled) return;
+        setIsLoading(false);
+      }
+    };
+
+    const fetchStats = async () => {
+      try {
+        const start = dateFrom.toISOString().slice(0, 10);
+        const end = dateTo.toISOString().slice(0, 10);
+        const s = await apiGet(`/history/stats?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+        if (cancelled) return;
+        setStats(s ?? null);
+      } catch (_e) {
+        if (cancelled) return;
+        setStats(null);
+      }
+    };
+
+    fetchData();
+    fetchStats();
+    return () => { cancelled = true; };
+  }, [dateFrom, dateTo, groupBy]);
+
+  // initialize date pickers to available data range from backend
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await apiGet<{ min?: string | null; max?: string | null }>(`/history/range`);
+        if (cancelled) return;
+        if (r?.min) setDateFrom(new Date(r.min));
+        if (r?.max) setDateTo(new Date(r.max));
+      } catch (_e) {
+        // ignore - keep defaults
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   const filteredData = useMemo(() => {
@@ -53,29 +107,8 @@ export function HistoricalExplorer() {
     });
   }, [raw, dateFrom, dateTo]);
 
-  const aggregatedData = useMemo(() => {
-    if (groupBy === "daily") return filteredData;
-    // client-side aggregate
-    const map = new Map<string, DayRow[]>();
-    filteredData.forEach(r => {
-      const key = groupBy === "monthly"
-        ? format(new Date(r.date), "MMM yyyy")
-        : format(new Date(r.date), "yyyy");
-      const arr = map.get(key) || [];
-      arr.push(r); map.set(key, arr);
-    });
-    return Array.from(map.entries()).map(([key, arr]) => ({
-      displayDate: key,
-      date: arr[0].date,
-      temp: Number((arr.reduce((s, x) => s + (x.temp ?? 0), 0) / arr.length).toFixed(1)),
-      tempmax: Number(Math.max(...arr.map(x => x.tempmax ?? 0)).toFixed(1)),
-      tempmin: Number(Math.min(...arr.map(x => x.tempmin ?? 0)).toFixed(1)),
-      cloudcover: Number((arr.reduce((s, x) => s + (x.cloudcover ?? 0), 0) / arr.length).toFixed(1)),
-      solarradiation: Number((arr.reduce((s, x) => s + (x.solarradiation ?? 0), 0) / arr.length).toFixed(1)),
-      humidity: Number((arr.reduce((s, x) => s + (x.humidity ?? 0), 0) / arr.length).toFixed(1)),
-      windspeed: Number((arr.reduce((s, x) => s + (x.windspeed ?? 0), 0) / arr.length).toFixed(1)),
-    })) as any;
-  }, [filteredData, groupBy]);
+  // Backend already supports grouping (daily/monthly/yearly). Use backend result directly.
+  const aggregatedData = useMemo(() => filteredData, [filteredData]);
 
   const heatwaveEvents = useMemo(() => {
     if (!highlightEvents || groupBy !== 'daily') return [];
@@ -143,14 +176,47 @@ export function HistoricalExplorer() {
               <div className="space-y-3">
                 <Label>Date Range</Label>
                 <div className="space-y-2">
-                  <Popover>
-                    <PopoverTrigger asChild><Button variant="outline" className="w-full justify-start text-left"><CalendarIcon className="mr-2 h-4 w-4" />{format(dateFrom, 'MMM d, yyyy')}</Button></PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={dateFrom} onSelect={(d) => d && setDateFrom(d)} initialFocus /></PopoverContent>
-                  </Popover>
-                  <Popover>
-                    <PopoverTrigger asChild><Button variant="outline" className="w-full justify-start text-left"><CalendarIcon className="mr-2 h-4 w-4" />{format(dateTo, 'MMM d, yyyy')}</Button></PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={dateTo} onSelect={(d) => d && setDateTo(d)} initialFocus /></PopoverContent>
-                  </Popover>
+                  <label className="block text-sm text-slate-700">From</label>
+                  <input
+                    aria-label="Start date"
+                    type="date"
+                    className="w-full rounded border px-3 py-2 text-sm"
+                    value={dateFrom ? dateFrom.toISOString().slice(0, 10) : ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v) setDateFrom(new Date(v));
+                    }}
+                  />
+
+                  <label className="block text-sm text-slate-700">To</label>
+                  <input
+                    aria-label="End date"
+                    type="date"
+                    className="w-full rounded border px-3 py-2 text-sm"
+                    value={dateTo ? dateTo.toISOString().slice(0, 10) : ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v) setDateTo(new Date(v));
+                    }}
+                  />
+
+                  <div className="mt-2 flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => {
+                      const end = dateTo ?? new Date();
+                      setDateTo(new Date(end));
+                      setDateFrom(addDays(end, -29));
+                    }}>Last 30</Button>
+                    <Button size="sm" variant="outline" onClick={() => {
+                      const end = dateTo ?? new Date();
+                      setDateTo(new Date(end));
+                      setDateFrom(addDays(end, -89));
+                    }}>Last 90</Button>
+                    <Button size="sm" variant="outline" onClick={() => {
+                      const end = dateTo ?? new Date();
+                      setDateTo(new Date(end));
+                      setDateFrom(new Date(end.getFullYear(), 0, 1));
+                    }}>YTD</Button>
+                  </div>
                 </div>
                 <p className="text-xs text-muted-foreground">{differenceInDays(dateTo, dateFrom) + 1} days selected</p>
               </div>
@@ -187,16 +253,25 @@ export function HistoricalExplorer() {
         <Card className="shadow-md">
           <CardHeader>
             <CardTitle>Historical Temperature Trends</CardTitle>
-            <p className="text-sm text-muted-foreground">Powered by /history</p>
+            <p className="text-sm text-muted-foreground">
+              {isLoading ? 'Loading historical data…' : error ? `Error: ${error}` : stats ? `${stats.count_days ?? '—'} days • avg ${stats.avg_temp !== null && stats.avg_temp !== undefined ? Number(stats.avg_temp).toFixed(1) + '°C' : '—'}` : 'Powered by /history'}
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={aggregatedData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                   <defs>
-                    <linearGradient id="tempRange" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#007BFF" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#007BFF" stopOpacity={0.05} />
+                    {/* Subtle temperature gradient for area (cool -> warm) - vertical (bottom -> top) */}
+                    <linearGradient id="tempRange" x1="0" y1="1" x2="0" y2="0">
+                      <stop offset="0%" stopColor="#2b86f6" stopOpacity={0.14} />
+                      <stop offset="60%" stopColor="#6ec1ff" stopOpacity={0.08} />
+                      <stop offset="100%" stopColor="#ffb16b" stopOpacity={0.06} />
+                    </linearGradient>
+                    {/* Gradient used for the main temperature line stroke - vertical (bottom -> top) */}
+                    <linearGradient id="tempLine" x1="0" y1="1" x2="0" y2="0">
+                      <stop offset="0%" stopColor="#2b86f6" stopOpacity={1} />
+                      <stop offset="100%" stopColor="#ff6b35" stopOpacity={1} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" vertical={false} />
@@ -208,7 +283,14 @@ export function HistoricalExplorer() {
                   ))}
                   <Area type="monotone" dataKey="tempmax" stroke="none" fill="url(#tempRange)" fillOpacity={1} />
                   <Area type="monotone" dataKey="tempmin" stroke="none" fill="#ffffff" fillOpacity={1} />
-                  <Line type="monotone" dataKey="temp" stroke="#007BFF" strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} />
+                  <Line
+                    type="monotone"
+                    dataKey="temp"
+                    stroke="url(#tempLine)"
+                    strokeWidth={2.5}
+                    dot={false}
+                    activeDot={{ r: 5, stroke: 'url(#tempLine)', strokeWidth: 2, fill: '#ffffff' }}
+                  />
                   <Brush dataKey="displayDate" height={30} stroke="#007BFF" fill="#f8f9fa" />
                 </ComposedChart>
               </ResponsiveContainer>

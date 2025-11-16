@@ -1,23 +1,5 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 
-const teamMembers = [
-  {
-    name: "Ly",
-    role: "Product & Data Science",
-    blurb: "Turns model outputs into everyday guidance.",
-  },
-  {
-    name: "Minh",
-    role: "Machine Learning Engineer",
-    blurb: "Keeps forecasts stable as conditions change.",
-  },
-  {
-    name: "Anh",
-    role: "Full-Stack Developer",
-    blurb: "Builds the responsive experience you interact with.",
-  },
-];
-
 export function About() {
   return (
     <div className="max-w-4xl mx-auto space-y-8">
@@ -71,30 +53,7 @@ export function About() {
           </Card>
 
           {/* Card 2: Performance */}
-          <Card className="shadow-md h-full">
-            <CardHeader className="space-y-2">
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <span aria-hidden>📊</span>
-                <span>Model Performance</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="rounded-lg border bg-muted/40 p-4 text-center">
-                  <div className="text-3xl font-semibold tracking-tight">0.71</div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    R² &mdash; explains most of the temperature variance on test data.
-                  </p>
-                </div>
-                <div className="rounded-lg border bg-muted/40 p-4 text-center">
-                  <div className="text-3xl font-semibold tracking-tight">0.78°C</div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    RMSE &mdash; average error stays under one degree Celsius.
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          {/* Model Performance card removed */}
 
           {/* Card 3: Explainability */}
           <Card className="shadow-md h-full">
@@ -131,36 +90,7 @@ export function About() {
         </div>
       </section>
 
-      {/* Meet the Team Section */}
-      <section id="team" className="space-y-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-          Who built this
-        </p>
-        <Card className="shadow-md">
-          <CardHeader className="space-y-1">
-            <CardTitle>Meet the team</CardTitle>
-            <CardDescription className="text-sm">
-              A small group of data scientists and engineers behind the assistant.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              {teamMembers.map(member => (
-                <div key={member.name} className="flex flex-col items-center gap-3 rounded-lg border bg-muted/30 p-4 text-center">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-2xl">
-                    <span aria-hidden>👤</span>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold">{member.name}</p>
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">{member.role}</p>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{member.blurb}</p>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </section>
+      {/* "Who built this" section removed per request */}
 
       {/* Footer */}
       <div className="text-center py-8">
@@ -171,3 +101,5 @@ export function About() {
     </div>
   );
 }
+
+
