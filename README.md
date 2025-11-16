@@ -1,19 +1,19 @@
+````markdown
 # Smart Weather — Full Stack Pack 
 
-## Tổng quan dự án
+## Project overview
 
-Smart Weather là một dự án end-to-end gọn nhẹ dùng để dự báo nhiệt độ cho **TP. Hồ Chí Minh** và giải thích *vì sao* một ngày lại nóng hơn hoặc mát hơn bình thường.
+Smart Weather is a lightweight end-to-end project for forecasting temperature in **Ho Chi Minh City** and explaining *why* a given day is hotter or cooler than usual.
 
-- Về **phía ML**, chúng em huấn luyện các mô hình chuỗi thời gian LightGBM trên dữ liệu thời tiết lịch sử (theo ngày + theo giờ), export sang chuẩn **ONNX**, và phục vụ qua backend **FastAPI**. Backend cũng cung cấp các endpoint tiện dụng cho “thời tiết hiện tại”, dự báo nhiều ngày và thống kê lịch sử.
-- Về **phía sản phẩm**, frontend **React + Vite** biến các dự báo đó thành một giao diện giải thích thân thiện: các thẻ tóm tắt (“How today compares”), các yếu tố chính (“What’s driving today’s temperature”), và biểu đồ cho thấy mỗi yếu tố đang đẩy nhiệt độ lên hay kéo xuống như thế nào.
-- Toàn bộ pack này đã được nối sẵn, nên bạn chỉ cần **giải nén, chạy backend + frontend là có ngay một Smart Weather assistant hoạt động trên máy local**.
+- On the **ML side**, we train LightGBM time-series models on historical weather data (daily + hourly), export them to **ONNX**, and serve them via a **FastAPI** backend. The backend also provides handy endpoints for “current conditions”, multi-day forecasts, and historical statistics.
+- On the **product side**, the **React + Vite** frontend turns those forecasts into an explainer-style UI: summary cards (“How today compares”), key drivers (“What’s driving today’s temperature”), and charts that show how each factor is nudging the temperature up or down.
+- The entire pack is already wired together, so you just need to **unzip, run the backend + frontend, and you’ll have a Smart Weather assistant running locally**.
 
-_(Tóm tắt nhanh: dự án dự báo và giải thích nhiệt độ TP.HCM, gồm đủ backend ML + frontend UI, chỉ cần unzip là chạy được.)_
+_(Quick summary: a project that forecasts and explains Ho Chi Minh City temperatures, with both ML backend + UI frontend included – just unzip and run.)_
 
 ---
 
-
-## 1) Cấu trúc thư mục
+## 1) Folder structure
 
 ```text
 smart_weather_full_project_fullrun/
@@ -25,7 +25,7 @@ smart_weather_full_project_fullrun/
 │  │  └─ weather_hcm_hourly.csv
 │  ├─ models_onnx/
 │  │  └─ temp_t+{1..5}.onnx           
-│  └─ smart_weather_ml/               (mã ML để train & export ONNX )
+│  └─ smart_weather_ml/               (ML code for training & exporting ONNX)
 │     ├─ __init__.py
 │     ├─ io.py, utils.py
 │     ├─ preprocessing.py, features.py
@@ -36,27 +36,27 @@ smart_weather_full_project_fullrun/
 ├─ frontend/
 │  └─ Smartweatherassistantuidesign-main/
 │     ├─ package.json
-│     ├─ .env.local                   (đã trỏ: VITE_API_BASE=http://localhost:8000)
+│     ├─ .env.local                   (already set: VITE_API_BASE=http://localhost:8000)
 │     └─ src/
-│        ├─ lib/api.ts                (helper gọi API)
-│        └─ (các component UI  – đã gắn API)
+│        ├─ lib/api.ts                (API helper)
+│        └─ (UI components – already wired to the API)
 ├─ scripts/
-│  ├─ setup_backend.ps1               (tạo venv, cài dep, chạy server)
-│  └─ fix_frontend_imports.ps1        (sửa import @version & cài các UI deps)
-└─ README_RUN.md                      (hướng dẫn ngắn – có trong gói)
-```
+│  ├─ setup_backend.ps1               (create venv, install deps, run server)
+│  └─ fix_frontend_imports.ps1        (fix @version imports & install UI deps)
+└─ README_RUN.md                      (short run guide – included in the pack)
+````
 
 ---
 
-## 2) Yêu cầu môi trường
+## 2) Environment requirements
 
-- **Windows + PowerShell**
-- **Python 3.10+** (khuyên dùng)
-- **Node.js LTS** (18 hoặc 20), npm đi kèm
+* **Windows + PowerShell**
+* **Python 3.10+** (recommended)
+* **Node.js LTS** (18 or 20), with npm
 
 ---
 
-## 3) Chạy Backend (FastAPI)
+## 3) Run Backend (FastAPI)
 
 ```powershell
 cd D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\backend
@@ -66,11 +66,11 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-Kiểm tra: mở trình duyệt tới `http://127.0.0.1:8000/health` → thấy `{ "ok": true, ... }` là ổn.
+Check: open your browser at `http://127.0.0.1:8000/health` → if you see `{ "ok": true, ... }`, it’s working.
 
-### Tuỳ chỉnh dữ liệu thật
+### Customizing with your own data
 
-- Thay file trong `backend/data/` **hoặc** đặt biến môi trường trước khi chạy:
+* Replace the files in `backend/data/` **or** set environment variables before running:
 
   ```powershell
   $env:WEATHER_DAILY_CSV="C:\path\to\your\weather_daily.csv"
@@ -78,80 +78,79 @@ Kiểm tra: mở trình duyệt tới `http://127.0.0.1:8000/health` → thấy 
   uvicorn main:app --reload --port 8000
   ```
 
+### Using ONNX models (if available)
 
-### Dùng mô hình ONNX (nếu có)
+* Put `temp_t+1.onnx … temp_t+5.onnx` into `backend/models_onnx/`.
+* If you **don’t** have them, the API will fall back to a simple statistical baseline.
 
-- Đặt file `temp_t+1.onnx … temp_t+5.onnx` vào `backend/models_onnx/`.
-- Nếu **không có**, API sẽ dùng baseline theo thống kê.
+### Main endpoints
 
-### Các endpoint chính
-
-- `GET /health` – tình trạng server.
-- `GET /now` – điều kiện hiện tại (ưu tiên hourly; fallback sang daily).
-- `GET /history?start=YYYY-MM-DD&end=YYYY-MM-DD&group_by=daily|monthly|yearly`
-- `GET /history/stats` – thống kê nhanh.
-- `POST /forecast_detailed` – dự báo 5 ngày (dùng ONNX nếu có).
-- `GET /explain?date=YYYY-MM-DD` – giải thích dự báo (có dữ liệu mẫu).
+* `GET /health` – server status.
+* `GET /now` – current conditions (prefers hourly; falls back to daily).
+* `GET /history?start=YYYY-MM-DD&end=YYYY-MM-DD&group_by=daily|monthly|yearly`
+* `GET /history/stats` – quick stats.
+* `POST /forecast_detailed` – 5-day forecast (uses ONNX if available).
+* `GET /explain?date=YYYY-MM-DD` – forecast explanation (with sample data).
 
 ---
 
-## 4) Chạy Frontend (React + Vite)
+## 4) Run Frontend (React + Vite)
 
 ```powershell
 cd D:\ML--06_11_25\DSEB--Machine-Learning_Group5\smart_weather_fullrun\frontend\Smartweatherassistantuidesign-main
-# Lần đầu cài đặt: Sửa import UI kiểu @radix-ui/...@version và cài deps
+# First-time setup: fix UI imports like @radix-ui/...@version and install deps
 powershell -ExecutionPolicy Bypass -File ..\..\scripts\fix_frontend_imports.ps1
 
-# Cài thư viện & chạy
+# Install dependencies & run
 npm install
 npm run dev
 ```
 
-Mở URL Vite hiển thị (thường là `http://localhost:5173`).
+Open the Vite URL shown in the terminal (usually `http://localhost:5173`).
 
-> **Ghi chú**
+> **Notes**
 >
-> - File `.env.local` đã có sẵn: `VITE_API_BASE=http://localhost:8000`.
-> - Nếu mạng npm chậm: `npm config set registry https://registry.npmmirror.com/` rồi `npm install` lại.
+> * `.env.local` is already set: `VITE_API_BASE=http://localhost:8000`.
+> * If npm is slow: run `npm config set registry https://registry.npmmirror.com/` then `npm install` again.
 
-### Các tab trong UI (đã nối API)
+### UI tabs (already connected to the API)
 
-- **Current Conditions** → gọi `GET /now`
-- **The Week Ahead** → gọi `POST /forecast_detailed`
-- **Historical Explorer** → gọi `GET /history`
+* **Current Conditions** → calls `GET /now`
+* **The Week Ahead** → calls `POST /forecast_detailed`
+* **Historical Explorer** → calls `GET /history`
 
 ---
 
-## 5) Lỗi thường gặp & cách xử
+## 5) Common issues & fixes
 
-- **Vite báo “Failed to resolve import '@radix-ui/...@x.y.z'”**  
-  → Chạy `fix_frontend_imports.ps1` trong thư mục UI (như hướng dẫn trên).
+* **Vite error: “Failed to resolve import '@radix-ui/.[..@x.y.z](mailto:..@x.y.z)'”**
+  → Run `fix_frontend_imports.ps1` in the UI folder (as shown above).
 
-- **`vite` not recognized / `npm` lỗi mạng**  
-  → Cài Node.js LTS; nếu mạng yếu dùng mirror:  
+* **`vite` not recognized / npm network errors**
+  → Install Node.js LTS; if the network is weak, use a mirror:
   `npm config set registry https://registry.npmmirror.com/`
 
-- **Backend: “Error loading ASGI app” / import lỗi**  
-  → Kiểm tra đang chạy trong thư mục `backend`, venv đã kích hoạt, và `uvicorn main:app` đúng tên module.
+* **Backend: “Error loading ASGI app” / import errors**
+  → Make sure you are in the `backend` folder, the venv is activated, and `uvicorn main:app` matches the correct module name.
 
-- **Backend không thấy CSV**  
-  → Đặt file đúng vào `backend/data/` hoặc dùng biến môi trường `WEATHER_..._CSV`.
+* **Backend can’t find CSV files**
+  → Put the files in `backend/data/` or use the `WEATHER_..._CSV` environment variables.
 
-- **Push GitHub bị chặn vì file >100MB**  
-  → Dùng **Git LFS**: `git lfs install` rồi `git lfs track "*.onnx" "*.csv"` trước khi `git add`.
+* **GitHub push blocked due to files >100MB**
+  → Use **Git LFS**: `git lfs install` then `git lfs track "*.onnx" "*.csv"` before `git add`.
 
 ---
 
-## 6) (Tuỳ chọn) Train & Export ONNX
+## 6) (Optional) Train & Export ONNX
 
-Trong `backend` (đã kích hoạt venv):
+In `backend` (with venv activated):
 
 ```powershell
 python -m smart_weather_ml.train
 ```
 
-- Pipeline sẽ train LightGBM cho các horizon và **export ONNX** vào `backend/models_onnx/`.
-- Khởi động lại backend để API dùng mô hình mới.
+* The pipeline will train LightGBM models for the horizons and **export ONNX** files into `backend/models_onnx/`.
+* Restart the backend so the API can use the new models.
 
----
-
+```
+```
