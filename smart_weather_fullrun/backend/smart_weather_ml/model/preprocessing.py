@@ -10,12 +10,12 @@ def basic_cleaning(data: pd.DataFrame) -> pd.DataFrame:
     for col in ["datetime", "sunrise", "sunset"]:
         if col in data.columns:
             data[col] = pd.to_datetime(data[col], errors="coerce")
-    data.drop("description", axis=1, inplace=True, errors="ignore")
+    data.drop(['description','name','address','resolvedAddress','latitude','longitude', 'source'], axis=1, inplace=True, errors="ignore")
     return data
 
 def split_data(data: pd.DataFrame):
     n = len(data)
-    n_train = int(n * 0.85)
+    n_train = int(n * 0.8)
     train_data = data.iloc[:n_train]
     test_data  = data.iloc[n_train:]
     X_train = train_data.drop(["temp"], axis=1)
@@ -88,7 +88,7 @@ class Preprocessor(BaseEstimator, TransformerMixin):
         if len(self.categorical_cols_to_keep_) > 0:
             self.ohe = OneHotEncoder(sparse_output=False, handle_unknown="ignore")
             self.ohe.fit(temp_df[self.categorical_cols_to_keep_])
-            self.ohe_cols_ =  [col.lower().replace(' ', r'_').replace(',', r'_').replace('.', r'_') for col in list(self.ohe.get_feature_names_out(self.categorical_cols_to_keep_))]
+            self.ohe_cols_ =  [col.lower().replace(' ', r'_').replace(',', r'_').replace('.', r'_').replace('-', r'_') for col in list(self.ohe.get_feature_names_out(self.categorical_cols_to_keep_))]
         else:
             self.ohe = None
             self.ohe_cols_ = []
@@ -135,3 +135,5 @@ class Preprocessor(BaseEstimator, TransformerMixin):
         clean = pd.concat([datetime_values, temp_df, categorical_data], axis=1)
 
         return clean
+
+

@@ -8,7 +8,7 @@ from .features import feature_engineer
 from lightgbm import LGBMRegressor, early_stopping, log_evaluation
 
 def objective_all_features(trial, X_train, y_train, target_name, preprocessor):
-    params = get_model_params(trial)
+    params = get_model_params(trial, target_name)
     all_train_metrics = {'mae': [], 'rmse': [], 'r2': [], 'mse': []}
     X_final, y_final = X_train.copy(), y_train.copy()
     tscv = TimeSeriesSplit(n_splits=4)

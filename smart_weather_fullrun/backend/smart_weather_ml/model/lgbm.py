@@ -19,20 +19,28 @@ def get_model(best_params):
         n_jobs=-1,
         verbose=-1,
     )
-def get_model_params(trial):
+def get_model_params(trial,  target_name):
+    horizon = int(target_name.split('_')[-1][1:])
     params = {
-        'n_estimators': trial.suggest_int('n_estimators', 300, 800),
-        'max_depth': trial.suggest_int('max_depth', 3, 7),
-        'num_leaves': trial.suggest_int('num_leaves', 10, 50),
-        'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 50, 100),
+        'n_estimators': trial.suggest_int('n_estimators', 200, 500),
+        'max_depth': trial.suggest_int('max_depth', 3, 5),
+        'num_leaves': trial.suggest_int('num_leaves', 10, 25),
+        'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 80, 150),
         'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.02, log=True),
         'feature_fraction': trial.suggest_float('feature_fraction', 0.1, 0.4),
         'bagging_fraction': trial.suggest_float('bagging_fraction', 0.4, 0.7),
         'bagging_freq': trial.suggest_int('bagging_freq', 2, 7),
-        'lambda_l1': trial.suggest_float('lambda_l1', 15, 50.0, log=True),
-        'lambda_l2': trial.suggest_float('lambda_l2', 12, 50.0, log=True),
+        'lambda_l1': trial.suggest_float('lambda_l1', 30, 80.0, log=True),
+        'lambda_l2': trial.suggest_float('lambda_l2', 30, 80.0, log=True),
+        'min_gain_to_spl': trial.suggest_float('min_gain_to_spl', 0.01, 0.1),
+        'max_bin': trial.suggest_float('max_bin', 128, 255)
     }
+    if horizon > 3:
+        params['max_depth'] = trial.suggest_int('max_depth', 2, 4)
+        params['num_leaves'] = trial.suggest_int('num_leaves', 10, 20)
+        params['min_data_in_leaf'] = trial.suggest_int('min_data_in_leaf', 100, 150)
     return params
+
 def train_final_model_all_features(X_train_raw, y_train_raw, best_params, preprocessor, target_name):
     X_train_processed = preprocessor.fit_transform(X_train_raw)
     X_train_fe, y_train_fe = feature_engineer(X_train_processed, y_train_raw)
